@@ -1,5 +1,7 @@
 import os
 import time
+import json
+import pika
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -140,6 +142,32 @@ def create_order(order: OrderCreateSchema, db: Session = Depends(get_db)):
         db.add(db_order)
         db.commit()
         db.refresh(db_order)
+        
+        # Publish event to RabbitMQ
+        try:
+            rabbitmq_host = os.getenv("RABBITMQ_HOST", "rabbitmq")
+            connection = pika.BlockingConnection(pika.ConnectionParameters(host=rabbitmq_host))
+            channel = connection.channel()
+            channel.queue_declare(queue='order_notifications', durable=True)
+            message = {
+                "id": db_order.id,
+                "user_id": db_order.user_id,
+                "total_amount": db_order.total_amount,
+                "items": items_list
+            }
+            channel.basic_publish(
+                exchange='',
+                routing_key='order_notifications',
+                body=json.dumps(message),
+                properties=pika.BasicProperties(
+                    delivery_mode=2,  # make message persistent
+                )
+            )
+            connection.close()
+            print(" [x] Sent order notification event to RabbitMQ", flush=True)
+        except Exception as mq_err:
+            print(f"Failed to publish RabbitMQ message: {mq_err}", flush=True)
+
         return db_order
     except Exception as e:
         db.rollback()
