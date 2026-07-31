@@ -1,12 +1,41 @@
 const express = require('express');
 const cors = require('cors');
 const { Sequelize, DataTypes } = require('sequelize');
+const client = require('prom-client');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Prometheus metrics configuration
+const collectDefaultMetrics = client.collectDefaultMetrics;
+collectDefaultMetrics({ register: client.register });
+
+const httpRequestsTotal = new client.Counter({
+  name: 'user_service_http_requests_total',
+  help: 'Total number of HTTP requests to User Service',
+  labelNames: ['method', 'route', 'status_code']
+});
+
 app.use(cors());
 app.use(express.json());
+
+// Track all HTTP requests
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    httpRequestsTotal.inc({
+      method: req.method,
+      route: req.route ? req.route.path : req.path,
+      status_code: res.statusCode
+    });
+  });
+  next();
+});
+
+// Metrics endpoint
+app.get('/metrics', async (req, res) => {
+  res.setHeader('Content-Type', client.register.contentType);
+  res.send(await client.register.metrics());
+});
 
 // Database connection
 const dbHost = process.env.DB_HOST || 'postgres';

@@ -10,7 +10,13 @@ from sqlalchemy import create_engine, Column, Integer, Float, String, JSON, Fore
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
+from prometheus_client import make_asgi_app
+
 app = FastAPI(title="Order Service", version="1.0.0")
+
+# Mount Prometheus ASGI metrics app
+metrics_app = make_asgi_app()
+app.mount("/metrics", metrics_app)
 
 # CORS middleware
 app.add_middleware(
