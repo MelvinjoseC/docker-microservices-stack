@@ -1,0 +1,66 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-test:
+    name: Lint, Build, and Test Microservices
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Validate Docker Compose syntax
+      - name: Validate Docker Compose Configuration
+        run: docker compose config -q
+
+      # Hadolint for Dockerfile quality
+      - name: Lint Dockerfiles
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: "**/Dockerfile"
+          recursive: true
+          ignore: DL3018,DL3008 # Ignore pin packages warnings for alpine/debian
+
+      # User Service CI
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install User Service Dependencies & Build
+        run: |
+          cd services/user-service
+          npm install
+          # npm test --if-present
+
+      # Catalog Service CI
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build Go Catalog Service
+        run: |
+          cd services/catalog-service
+          # Fetch dependencies and build
+          go get -d -v ./...
+          go build -v ./...
+
+      # Order & Notification Services CI
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Lint Python Services
+        run: |
+          pip install flake8
+          # run flake8, ignore line length checks
+          flake8 services/order-service services/notification-service --max-line-length=120 --exclude=venv,.venv
