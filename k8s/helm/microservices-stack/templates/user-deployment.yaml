@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-user-service
+  labels:
+    app: user-service
+    environment: {{ .Values.environment }}
+spec:
+  replicas: {{ .Values.replicaCount.user }}
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: user-service
+          image: "{{ .Values.images.registry }}/{{ .Values.images.username }}/{{ .Values.images.user }}:{{ .Values.images.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.ports.user }}
+          env:
+            - name: PORT
+              value: "{{ .Values.ports.user }}"
+            - name: DB_HOST
+              value: "postgres"
+            - name: DB_USER
+              value: "{{ .Values.databases.postgres.user }}"
+            - name: DB_PASSWORD
+              value: "{{ .Values.databases.postgres.password }}"
+            - name: DB_NAME
+              value: "{{ .Values.databases.postgres.db }}"
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi

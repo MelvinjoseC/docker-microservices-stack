@@ -1,0 +1,45 @@
+# Global configurations
+environment: production
+
+# Service replicas
+replicaCount:
+  gateway: 2
+  frontend: 2
+  user: 2
+  catalog: 2
+  order: 2
+  notification: 1
+
+# Image configurations
+images:
+  registry: docker.io
+  username: melvinjosec
+  pullPolicy: IfNotPresent
+  gateway: api-gateway
+  frontend: frontend
+  user: user-service
+  catalog: catalog-service
+  order: order-service
+  notification: notification-service
+  tag: latest
+
+# Service Ports
+ports:
+  gateway: 80
+  frontend: 80
+  user: 5000
+  catalog: 8080
+  order: 8000
+
+# Database configurations
+databases:
+  postgres:
+    user: devuser
+    password: devpassword
+    db: microservices_db
+    storage: 10Gi
+  mongodb:
+    user: devuser
+    password: devpassword
+    db: catalog_db
+    storage: 10Gi
