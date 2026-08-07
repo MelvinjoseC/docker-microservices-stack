@@ -1,0 +1,78 @@
+---
+- name: Provision Microservices Host Environment
+  hosts: all
+  become: true
+  
+  vars:
+    docker_packages:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - software-properties-common
+
+  tasks:
+    - name: Update apt cache and upgrade system packages
+      apt:
+        update_cache: true
+        upgrade: safe
+      when: ansible_os_family == "Debian"
+
+    - name: Install system dependencies
+      apt:
+        name: "{{ docker_packages }}"
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install Docker CE & Docker Compose Plugin
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Start and enable Docker service
+      service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add current user to Docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+
+    # Security sysctl tuning for production containers
+    - name: Set virtual memory maximum map count (for databases/ELK)
+      sysctl:
+        name: vm.max_map_count
+        value: '262144'
+        state: present
+        reload: true
+
+    - name: Verify Docker installation
+      command: docker --version
+      register: docker_version
+      changed_when: false
+
+    - name: Output Docker version
+      debug:
+        msg: "Docker is installed: {{ docker_version.stdout }}"
