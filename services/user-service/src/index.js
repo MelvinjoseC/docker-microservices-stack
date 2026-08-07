@@ -19,14 +19,23 @@ const httpRequestsTotal = new client.Counter({
 app.use(cors());
 app.use(express.json());
 
-// Track all HTTP requests
+// Track all HTTP requests and log them in JSON format
 app.use((req, res, next) => {
+  const start = Date.now();
   res.on('finish', () => {
+    const duration = Date.now() - start;
     httpRequestsTotal.inc({
       method: req.method,
       route: req.route ? req.route.path : req.path,
       status_code: res.statusCode
     });
+    console.log(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: res.statusCode >= 400 ? 'error' : 'info',
+      message: `${req.method} ${req.url} - ${res.statusCode}`,
+      service: 'user-service',
+      duration_ms: duration
+    }));
   });
   next();
 });

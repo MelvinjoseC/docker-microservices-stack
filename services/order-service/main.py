@@ -27,6 +27,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi import Request
+import json
+import datetime
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = datetime.datetime.utcnow()
+    response = await call_next(request)
+    duration = (datetime.datetime.utcnow() - start_time).total_seconds() * 1000
+    
+    if request.url.path != "/metrics":
+        log_data = {
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "level": "error" if response.status_code >= 400 else "info",
+            "message": f"{request.method} {request.url.path} - {response.status_code}",
+            "service": "order-service",
+            "duration_ms": duration
+        }
+        print(json.dumps(log_data), flush=True)
+        
+    return response
+
 # Database Configuration
 DATABASE_URL = os.getenv(
     "DATABASE_URL", 
