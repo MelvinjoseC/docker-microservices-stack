@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # API Gateway (Nginx Reverse Proxy)
   api-gateway:
@@ -7,8 +5,12 @@ services:
       context: ./api-gateway
       dockerfile: Dockerfile
     container_name: dev-api-gateway
+    restart: unless-stopped
     ports:
-      - "80:80"
+      - "${GATEWAY_PORT:-80}:80"
+    networks:
+      - frontend-tier
+      - backend-tier
     depends_on:
       user-service:
         condition: service_healthy
@@ -30,8 +32,11 @@ services:
       context: ./services/frontend
       dockerfile: Dockerfile
     container_name: dev-frontend
+    restart: unless-stopped
     expose:
       - "80"
+    networks:
+      - frontend-tier
     depends_on:
       - user-service
       - catalog-service
@@ -43,15 +48,19 @@ services:
       context: ./services/user-service
       dockerfile: Dockerfile
     container_name: dev-user-service
+    restart: unless-stopped
     environment:
-      - PORT=5000
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=devuser
-      - DB_PASSWORD=devpassword
-      - DB_NAME=microservices_db
+      - PORT=${USER_SERVICE_PORT:-5000}
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-devuser}
+      - DB_PASSWORD=${DB_PASSWORD:-devpassword}
+      - DB_NAME=${DB_NAME:-microservices_db}
     expose:
       - "5000"
+    networks:
+      - backend-tier
+      - data-tier
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,11 +76,15 @@ services:
       context: ./services/catalog-service
       dockerfile: Dockerfile
     container_name: dev-catalog-service
+    restart: unless-stopped
     environment:
-      - PORT=8080
-      - MONGO_URI=mongodb://devuser:devpassword@mongodb:27017/catalog_db?authSource=admin
+      - PORT=${CATALOG_SERVICE_PORT:-8080}
+      - MONGO_URI=${MONGO_URI:-mongodb://devuser:devpassword@mongodb:27017/catalog_db?authSource=admin}
     expose:
       - "8080"
+    networks:
+      - backend-tier
+      - data-tier
     depends_on:
       mongodb:
         condition: service_healthy
@@ -87,12 +100,16 @@ services:
       context: ./services/order-service
       dockerfile: Dockerfile
     container_name: dev-order-service
+    restart: unless-stopped
     environment:
-      - PORT=8000
-      - DATABASE_URL=postgresql://devuser:devpassword@postgres:5432/microservices_db
-      - RABBITMQ_HOST=rabbitmq
+      - PORT=${ORDER_SERVICE_PORT:-8000}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://devuser:devpassword@postgres:5432/microservices_db}
+      - RABBITMQ_HOST=${RABBITMQ_HOST:-rabbitmq}
     expose:
       - "8000"
+    networks:
+      - backend-tier
+      - data-tier
     depends_on:
       postgres:
         condition: service_healthy
@@ -110,26 +127,39 @@ services:
       context: ./services/notification-service
       dockerfile: Dockerfile
     container_name: dev-notification-service
+    restart: unless-stopped
     environment:
-      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_HOST=${RABBITMQ_HOST:-rabbitmq}
+      - HEALTH_PORT=8001
+    networks:
+      - backend-tier
+      - data-tier
     depends_on:
       rabbitmq:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
 
   # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
     container_name: dev-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: devuser
-      POSTGRES_PASSWORD: devpassword
-      POSTGRES_DB: microservices_db
+      POSTGRES_USER: ${DB_USER:-devuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-devpassword}
+      POSTGRES_DB: ${DB_NAME:-microservices_db}
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
+    networks:
+      - data-tier
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U devuser -d microservices_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-devuser} -d ${DB_NAME:-microservices_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -138,12 +168,15 @@ services:
   mongodb:
     image: mongo:6.0
     container_name: dev-mongodb
+    restart: unless-stopped
     environment:
-      MONGO_INITDB_ROOT_USERNAME: devuser
-      MONGO_INITDB_ROOT_PASSWORD: devpassword
-      MONGO_INITDB_DATABASE: catalog_db
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-devuser}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-devpassword}
+      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE:-catalog_db}
     ports:
       - "27017:27017"
+    networks:
+      - data-tier
     volumes:
       - mongo_data:/data/db
     healthcheck:
@@ -156,9 +189,12 @@ services:
   rabbitmq:
     image: rabbitmq:3.12-management-alpine
     container_name: dev-rabbitmq
+    restart: unless-stopped
     ports:
       - "5672:5672"
       - "15672:15672"
+    networks:
+      - data-tier
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
@@ -171,11 +207,14 @@ services:
   prometheus:
     image: prom/prometheus:v2.52.0
     container_name: dev-prometheus
+    restart: unless-stopped
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    networks:
+      - backend-tier
     depends_on:
       - user-service
       - catalog-service
@@ -185,11 +224,14 @@ services:
   grafana:
     image: grafana/grafana:11.0.0
     container_name: dev-grafana
+    restart: unless-stopped
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
       - grafana_data:/var/lib/grafana
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
+    networks:
+      - backend-tier
     depends_on:
       - prometheus
       - loki
@@ -198,22 +240,36 @@ services:
   loki:
     image: grafana/loki:2.9.8
     container_name: dev-loki
+    restart: unless-stopped
     volumes:
       - ./monitoring/loki/loki-config.yml:/etc/loki/local-config.yaml
       - loki_data:/tmp/loki
     ports:
-      - "3100:3100"
+      - "${LOKI_PORT:-3100}:3100"
+    networks:
+      - backend-tier
 
   # Promtail (Docker Logs Collector Agent)
   promtail:
     image: grafana/promtail:2.9.8
     container_name: dev-promtail
+    restart: unless-stopped
     volumes:
       - ./monitoring/promtail/promtail-config.yml:/etc/promtail/config.yml
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/log:/var/log
+    networks:
+      - backend-tier
     depends_on:
       - loki
+
+networks:
+  frontend-tier:
+    driver: bridge
+  backend-tier:
+    driver: bridge
+  data-tier:
+    driver: bridge
 
 volumes:
   postgres_data:
