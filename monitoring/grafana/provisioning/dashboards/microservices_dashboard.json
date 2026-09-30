@@ -58,7 +58,53 @@
           "datasource": "Prometheus",
           "editorMode": "code",
           "expr": "rate(promhttp_metric_handler_requests_total[1m])",
-          "legendFormat": "Catalog Service",
+          "legendFormat": "Catalog Service Requests",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "title": "Microservices Cluster Availability (up/down)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "editorMode": "code",
+          "expr": "up",
+          "legendFormat": "{{job}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "title": "HTTP 5xx Server Error Rate",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "editorMode": "code",
+          "expr": "sum(rate(user_service_http_requests_total{status_code=~\"5..\"}[1m])) or vector(0)",
+          "legendFormat": "5xx Errors/sec",
           "range": true,
           "refId": "A"
         }
@@ -76,5 +122,5 @@
   "timepicker": {},
   "timezone": "",
   "title": "DevOps Microservices Performance Dashboard",
-  "version": 1
+  "version": 2
 }

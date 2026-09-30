@@ -1,0 +1,29 @@
+groups:
+  - name: microservices_alerts
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Microservice target {{ $labels.job }} is down"
+          description: "Target {{ $labels.instance }} of job {{ $labels.job }} has been unresponsive for more than 1 minute."
+
+      - alert: HighHttpErrorRate
+        expr: sum(rate(user_service_http_requests_total{status_code=~"5.."}[5m])) / sum(rate(user_service_http_requests_total[5m])) * 100 > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP 5xx error rate detected on User Service"
+          description: "HTTP 5xx error rate is above 5% (current: {{ $value }}%) over the last 5 minutes."
+
+      - alert: SlowHttpRequests
+        expr: rate(user_service_http_requests_total[5m]) > 0 and (sum(rate(promhttp_metric_handler_requests_total[5m])) > 100)
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High transaction load across microservices"
+          description: "Service is experiencing sustained high traffic above normal thresholds."
