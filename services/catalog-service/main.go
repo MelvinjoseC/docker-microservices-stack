@@ -111,8 +111,8 @@ func main() {
 	// Metrics endpoint
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	// Health check
-	r.GET("/health", func(c *gin.Context) {
+	// Health check handler
+	healthHandler := func(c *gin.Context) {
 		if !isMongoConnect {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"status":   "degraded",
@@ -126,9 +126,12 @@ func main() {
 			"database": "connected",
 			"service":  "catalog-service",
 		})
-	})
+	}
 
-	// Get all products
+	r.GET("/health", healthHandler)
+	r.GET("/api/products/health", healthHandler)
+
+	// Get all products with optional name filtering
 	r.GET("/api/products", func(c *gin.Context) {
 		if !isMongoConnect {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database not connected"})
@@ -138,7 +141,13 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		cursor, err := productCol.Find(ctx, bson.M{})
+		filter := bson.M{}
+		searchQuery := c.Query("search")
+		if searchQuery != "" {
+			filter["name"] = bson.M{"$regex": searchQuery, "$options": "i"}
+		}
+
+		cursor, err := productCol.Find(ctx, filter)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -151,7 +160,36 @@ func main() {
 			return
 		}
 
+		if results == nil {
+			results = []Product{}
+		}
+
 		c.JSON(http.StatusOK, results)
+	})
+
+	// Get product by ID
+	r.GET("/api/products/:id", func(c *gin.Context) {
+		if !isMongoConnect {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database not connected"})
+			return
+		}
+
+		id := c.Param("id")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var product Product
+		err := productCol.FindOne(ctx, bson.M{"_id": id}).Decode(&product)
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, product)
 	})
 
 	// Add new product
@@ -167,11 +205,17 @@ func main() {
 			return
 		}
 
+		if newProduct.Name == "" || newProduct.Price < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid product name or price"})
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		// Generate dynamic ID based on timestamp for uniqueness
-		newProduct.ID = fmt.Sprintf("p%d", time.Now().UnixNano())
+		if newProduct.ID == "" {
+			newProduct.ID = fmt.Sprintf("p%d", time.Now().UnixNano())
+		}
 
 		_, err := productCol.InsertOne(ctx, newProduct)
 		if err != nil {
@@ -180,6 +224,71 @@ func main() {
 		}
 
 		c.JSON(http.StatusCreated, newProduct)
+	})
+
+	// Update existing product
+	r.PUT("/api/products/:id", func(c *gin.Context) {
+		if !isMongoConnect {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database not connected"})
+			return
+		}
+
+		id := c.Param("id")
+		var updateData Product
+		if err := c.ShouldBindJSON(&updateData); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		updateDoc := bson.M{
+			"$set": bson.M{
+				"name":  updateData.Name,
+				"price": updateData.Price,
+				"stock": updateData.Stock,
+			},
+		}
+
+		res, err := productCol.UpdateOne(ctx, bson.M{"_id": id}, updateDoc)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if res.MatchedCount == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+			return
+		}
+
+		updateData.ID = id
+		c.JSON(http.StatusOK, updateData)
+	})
+
+	// Delete product
+	r.DELETE("/api/products/:id", func(c *gin.Context) {
+		if !isMongoConnect {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database not connected"})
+			return
+		}
+
+		id := c.Param("id")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		res, err := productCol.DeleteOne(ctx, bson.M{"_id": id})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if res.DeletedCount == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Product successfully deleted"})
 	})
 
 	r.Run(":" + port)
