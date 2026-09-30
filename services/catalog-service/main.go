@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -83,21 +86,56 @@ func initMongoDB() {
 	}
 }
 
-func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+// Structured JSON Logger Middleware with correlation ID propagation
+func jsonLoggerMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		path := c.Request.URL.Path
+
+		correlationID := c.GetHeader("X-Correlation-ID")
+		if correlationID == "" {
+			correlationID = c.GetHeader("X-Request-ID")
+		}
+		if correlationID == "" {
+			correlationID = fmt.Sprintf("cat-%d", time.Now().UnixNano())
+		}
+		c.Header("X-Correlation-ID", correlationID)
+
+		c.Next()
+
+		if path != "/metrics" {
+			duration := time.Since(start)
+			logEntry := map[string]interface{}{
+				"timestamp":      time.Now().UTC().Format(time.RFC3339),
+				"correlation_id": correlationID,
+				"level":          "info",
+				"method":         c.Request.Method,
+				"path":           path,
+				"status":         c.Writer.Status(),
+				"duration_ms":    float64(duration.Microseconds()) / 1000.0,
+				"service":        "catalog-service",
+			}
+			if c.Writer.Status() >= 400 {
+				logEntry["level"] = "error"
+			}
+			jsonBytes, err := json.Marshal(logEntry)
+			if err == nil {
+				fmt.Println(string(jsonBytes))
+			}
+		}
 	}
+}
 
-	initMongoDB()
-
-	r := gin.Default()
+func setupRouter() *gin.Engine {
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(jsonLoggerMiddleware())
 
 	// CORS middleware
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-Correlation-ID, X-Request-ID")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 
 		if c.Request.Method == "OPTIONS" {
@@ -291,5 +329,49 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"message": "Product successfully deleted"})
 	})
 
-	r.Run(":" + port)
+	return r
+}
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	initMongoDB()
+
+	router := setupRouter()
+
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: router,
+	}
+
+	// Initializing the server in a goroutine so that it won't block graceful shutdown handling
+	go func() {
+		log.Printf("Catalog Service starting on port %s", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server startup failed: %s\n", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down Catalog Service...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatal("Server forced to shutdown:", err)
+	}
+
+	if client != nil {
+		_ = client.Disconnect(ctx)
+		log.Println("MongoDB connection closed cleanly.")
+	}
+
+	log.Println("Catalog Service exiting.")
 }
