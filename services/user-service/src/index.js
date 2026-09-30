@@ -119,8 +119,8 @@ async function connectDb(retries = 5, delay = 5000) {
   console.error('Could not connect to database after retries. Starting server in degraded state.');
 }
 
-// Health Check
-app.get('/health', async (req, res) => {
+// Health Check Handler
+const healthCheckHandler = async (req, res) => {
   if (!isDbConnected) {
     return res.status(503).json({ status: 'degraded', database: 'disconnected', service: 'user-service' });
   }
@@ -130,13 +130,30 @@ app.get('/health', async (req, res) => {
   } catch (error) {
     res.status(500).json({ status: 'unhealthy', error: error.message, service: 'user-service' });
   }
-});
+};
+
+app.get('/health', healthCheckHandler);
+app.get('/api/users/health', healthCheckHandler);
 
 // API Routes
 app.get('/api/users', async (req, res) => {
   try {
-    const users = await User.findAll();
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    const offset = parseInt(req.query.offset) || 0;
+    const users = await User.findAll({ limit, offset, order: [['id', 'ASC']] });
     res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/users/:id', async (req, res) => {
+  try {
+    const user = await User.findByPk(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(user);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -147,8 +164,12 @@ app.post('/api/users', async (req, res) => {
   if (!name || !email) {
     return res.status(400).json({ error: 'Name and email are required' });
   }
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ error: 'Invalid email address format' });
+  }
   try {
-    const newUser = await User.create({ name, email, role: role || 'user' });
+    const newUser = await User.create({ name: name.trim(), email: email.trim().toLowerCase(), role: role || 'user' });
     res.status(201).json(newUser);
   } catch (error) {
     if (error.name === 'SequelizeUniqueConstraintError') {
@@ -158,7 +179,46 @@ app.post('/api/users', async (req, res) => {
   }
 });
 
-app.listen(PORT, async () => {
+app.put('/api/users/:id', async (req, res) => {
+  try {
+    const user = await User.findByPk(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const { name, email, role } = req.body;
+    if (email) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ error: 'Invalid email address format' });
+      }
+      user.email = email.trim().toLowerCase();
+    }
+    if (name) user.name = name.trim();
+    if (role) user.role = role;
+    await user.save();
+    res.json(user);
+  } catch (error) {
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({ error: 'Email already exists' });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/users/:id', async (req, res) => {
+  try {
+    const user = await User.findByPk(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    await user.destroy();
+    res.status(200).json({ message: `User ${req.params.id} successfully deleted` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+const server = app.listen(PORT, async () => {
   console.log(`User Service running on port ${PORT}`);
   await connectDb();
 });
