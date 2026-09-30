@@ -20,15 +20,35 @@ spec:
             - containerPort: 5000
           env:
             - name: PORT
-              value: "5000"
+              valueFrom:
+                configMapKeyRef:
+                  name: microservices-config
+                  key: PORT_USER_SERVICE
             - name: DB_HOST
-              value: "postgres"
+              valueFrom:
+                configMapKeyRef:
+                  name: microservices-config
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: microservices-config
+                  key: DB_PORT
             - name: DB_USER
-              value: "devuser"
+              valueFrom:
+                secretKeyRef:
+                  name: microservices-secrets
+                  key: POSTGRES_USER
             - name: DB_PASSWORD
-              value: "devpassword"
+              valueFrom:
+                secretKeyRef:
+                  name: microservices-secrets
+                  key: POSTGRES_PASSWORD
             - name: DB_NAME
-              value: "microservices_db"
+              valueFrom:
+                configMapKeyRef:
+                  name: microservices-config
+                  key: DB_NAME
           resources:
             limits:
               cpu: "500m"
@@ -86,9 +106,15 @@ spec:
             - containerPort: 8080
           env:
             - name: PORT
-              value: "8080"
+              valueFrom:
+                configMapKeyRef:
+                  name: microservices-config
+                  key: PORT_CATALOG_SERVICE
             - name: MONGO_URI
-              value: "mongodb://devuser:devpassword@mongodb:27017/catalog_db?authSource=admin"
+              valueFrom:
+                secretKeyRef:
+                  name: microservices-secrets
+                  key: MONGO_URI
           resources:
             limits:
               cpu: "500m"
@@ -145,10 +171,21 @@ spec:
           ports:
             - containerPort: 8000
           env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: microservices-config
+                  key: PORT_ORDER_SERVICE
             - name: DATABASE_URL
-              value: "postgresql://devuser:devpassword@postgres:5432/microservices_db"
+              valueFrom:
+                secretKeyRef:
+                  name: microservices-secrets
+                  key: DATABASE_URL
             - name: RABBITMQ_HOST
-              value: "rabbitmq"
+              valueFrom:
+                configMapKeyRef:
+                  name: microservices-config
+                  key: RABBITMQ_HOST
           resources:
             limits:
               cpu: "500m"
@@ -206,9 +243,15 @@ spec:
             - containerPort: 8001
           env:
             - name: RABBITMQ_HOST
-              value: "rabbitmq"
+              valueFrom:
+                configMapKeyRef:
+                  name: microservices-config
+                  key: RABBITMQ_HOST
             - name: HEALTH_PORT
-              value: "8001"
+              valueFrom:
+                configMapKeyRef:
+                  name: microservices-config
+                  key: PORT_NOTIFICATION_HEALTH
           resources:
             limits:
               cpu: "200m"

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: microservices-config
+  namespace: microservices-stack
+data:
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+  DB_NAME: "microservices_db"
+  MONGO_INITDB_DATABASE: "catalog_db"
+  RABBITMQ_HOST: "rabbitmq"
+  PORT_USER_SERVICE: "5000"
+  PORT_CATALOG_SERVICE: "8080"
+  PORT_ORDER_SERVICE: "8000"
+  PORT_NOTIFICATION_HEALTH: "8001"

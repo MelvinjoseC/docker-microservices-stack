@@ -30,11 +30,20 @@ spec:
           image: postgres:15-alpine
           env:
             - name: POSTGRES_USER
-              value: devuser
+              valueFrom:
+                secretKeyRef:
+                  name: microservices-secrets
+                  key: POSTGRES_USER
             - name: POSTGRES_PASSWORD
-              value: devpassword
+              valueFrom:
+                secretKeyRef:
+                  name: microservices-secrets
+                  key: POSTGRES_PASSWORD
             - name: POSTGRES_DB
-              value: microservices_db
+              valueFrom:
+                configMapKeyRef:
+                  name: microservices-config
+                  key: DB_NAME
           ports:
             - containerPort: 5432
           volumeMounts:
@@ -88,11 +97,20 @@ spec:
           image: mongo:6.0
           env:
             - name: MONGO_INITDB_ROOT_USERNAME
-              value: devuser
+              valueFrom:
+                secretKeyRef:
+                  name: microservices-secrets
+                  key: MONGO_INITDB_ROOT_USERNAME
             - name: MONGO_INITDB_ROOT_PASSWORD
-              value: devpassword
+              valueFrom:
+                secretKeyRef:
+                  name: microservices-secrets
+                  key: MONGO_INITDB_ROOT_PASSWORD
             - name: MONGO_INITDB_DATABASE
-              value: catalog_db
+              valueFrom:
+                configMapKeyRef:
+                  name: microservices-config
+                  key: MONGO_INITDB_DATABASE
           ports:
             - containerPort: 27017
           volumeMounts:
