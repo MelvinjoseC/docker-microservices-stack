@@ -3,35 +3,82 @@ import sys
 import pika
 import json
 
+import os
+import random
+from datetime import datetime
+
+DLQ_QUEUE_NAME = 'order_notifications_dlq'
+
+def log_event(level, message, **kwargs):
+    payload = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "level": level,
+        "service": "notification-service",
+        "message": message,
+        **kwargs
+    }
+    print(json.dumps(payload), flush=True)
+
 def callback(ch, method, properties, body):
     try:
         data = json.loads(body)
-        print(f" [x] Notification Received: Processing order #{data.get('id')} for User #{data.get('user_id')}", flush=True)
+        order_id = data.get('id')
+        user_id = data.get('user_id')
+        log_event("info", f"Notification Received: Processing order #{order_id} for User #{user_id}", order_id=order_id, user_id=user_id)
+        
         # Simulate processing notification (email/SMS)
-        time.sleep(1)
-        print(f" [x] Notification Sent successfully for order #{data.get('id')}!", flush=True)
+        time.sleep(0.5)
+        log_event("info", f"Notification Sent successfully for order #{order_id}", order_id=order_id)
         ch.basic_ack(delivery_tag=method.delivery_tag)
     except Exception as e:
-        print(f"Error processing message: {e}", flush=True)
-        # Nack and requeue
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        log_event("error", f"Error processing message: {str(e)}. Forwarding to DLQ.", error=str(e))
+        try:
+            # Route poison-pill or failed message to Dead Letter Queue
+            ch.queue_declare(queue=DLQ_QUEUE_NAME, durable=True)
+            dlq_payload = {
+                "original_body": body.decode('utf-8') if isinstance(body, bytes) else str(body),
+                "error": str(e),
+                "failed_at": datetime.utcnow().isoformat()
+            }
+            ch.basic_publish(
+                exchange='',
+                routing_key=DLQ_QUEUE_NAME,
+                body=json.dumps(dlq_payload),
+                properties=pika.BasicProperties(delivery_mode=2)
+            )
+            log_event("warn", f"Message safely routed to Dead Letter Queue: {DLQ_QUEUE_NAME}")
+        except Exception as dlq_err:
+            log_event("error", f"Failed routing to DLQ: {dlq_err}")
+        
+        # Ack original queue so consumer is not blocked
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+def connect_with_retry(rabbitmq_host, max_attempts=10):
+    delay = 2
+    for attempt in range(1, max_attempts + 1):
+        try:
+            log_event("info", f"Attempting to connect to RabbitMQ broker (attempt {attempt}/{max_attempts})...", host=rabbitmq_host)
+            connection = pika.BlockingConnection(pika.ConnectionParameters(
+                host=rabbitmq_host,
+                connection_attempts=3,
+                retry_delay=2,
+                heartbeat=60
+            ))
+            return connection
+        except (pika.exceptions.AMQPConnectionError, Exception) as err:
+            jitter = random.uniform(0.5, 1.5)
+            sleep_time = min(delay * (2 ** (attempt - 1)) + jitter, 30)
+            log_event("warn", f"RabbitMQ not ready ({err}), retrying in {sleep_time:.1f}s...")
+            time.sleep(sleep_time)
+    return None
 
 def main():
-    rabbitmq_host = 'rabbitmq'
+    rabbitmq_host = os.getenv('RABBITMQ_HOST', 'rabbitmq')
     queue_name = 'order_notifications'
     
-    print("Notification Service starting...", flush=True)
+    log_event("info", "Notification Service starting up...")
     
-    # Try connecting to RabbitMQ with retry loop
-    connection = None
-    for attempt in range(1, 11):
-        try:
-            print(f"Attempting to connect to RabbitMQ (attempt {attempt}/10)...", flush=True)
-            connection = pika.BlockingConnection(pika.ConnectionParameters(host=rabbitmq_host))
-            break
-        except pika.exceptions.AMQPConnectionError:
-            print("RabbitMQ not ready yet, sleeping 5s...", flush=True)
-            time.sleep(5)
+    connection = connect_with_retry(rabbitmq_host)
             
     if not connection:
         print("Failed to connect to RabbitMQ after 10 attempts. Exiting.", flush=True)
