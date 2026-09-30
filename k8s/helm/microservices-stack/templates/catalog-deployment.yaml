@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-catalog-service
+  labels:
+    app: catalog-service
+    {{- include "microservices-stack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount.catalog }}
+  selector:
+    matchLabels:
+      app: catalog-service
+  template:
+    metadata:
+      labels:
+        app: catalog-service
+    spec:
+      containers:
+        - name: catalog-service
+          image: "{{ .Values.images.registry }}/{{ .Values.images.username }}/{{ .Values.images.catalog }}:{{ .Values.images.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.ports.catalog }}
+          env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: PORT_CATALOG_SERVICE
+            - name: MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: MONGO_URI
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 64Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.ports.catalog }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.ports.catalog }}
+            initialDelaySeconds: 10
+            periodSeconds: 5

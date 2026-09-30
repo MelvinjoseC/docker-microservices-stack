@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels:
+    {{- include "microservices-stack.labels" . | nindent 4 }}
+data:
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+  DB_NAME: "{{ .Values.databases.postgres.db }}"
+  MONGO_INITDB_DATABASE: "{{ .Values.databases.mongodb.db }}"
+  RABBITMQ_HOST: "rabbitmq"
+  PORT_USER_SERVICE: "{{ .Values.ports.user }}"
+  PORT_CATALOG_SERVICE: "{{ .Values.ports.catalog }}"
+  PORT_ORDER_SERVICE: "{{ .Values.ports.order }}"
+  PORT_NOTIFICATION_HEALTH: "8001"

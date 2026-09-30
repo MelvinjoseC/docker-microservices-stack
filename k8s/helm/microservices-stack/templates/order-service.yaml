@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  labels:
+    app: order-service
+    {{- include "microservices-stack.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: {{ .Values.ports.order }}
+      targetPort: {{ .Values.ports.order }}
+  selector:
+    app: order-service
