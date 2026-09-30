@@ -30,20 +30,26 @@ app.add_middleware(
 from fastapi import Request
 import json
 import datetime
+import uuid
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    correlation_id = request.headers.get("x-correlation-id") or request.headers.get("x-request-id") or f"order-{uuid.uuid4()}"
     start_time = datetime.datetime.utcnow()
+    
     response = await call_next(request)
     duration = (datetime.datetime.utcnow() - start_time).total_seconds() * 1000
+    
+    response.headers["X-Correlation-ID"] = correlation_id
     
     if request.url.path != "/metrics":
         log_data = {
             "timestamp": datetime.datetime.utcnow().isoformat(),
+            "correlation_id": correlation_id,
             "level": "error" if response.status_code >= 400 else "info",
             "message": f"{request.method} {request.url.path} - {response.status_code}",
             "service": "order-service",
-            "duration_ms": duration
+            "duration_ms": round(duration, 2)
         }
         print(json.dumps(log_data), flush=True)
         
@@ -95,15 +101,17 @@ def get_db():
     finally:
         db.close()
 
+from pydantic import BaseModel, Field
+
 # Pydantic Schemas
 class OrderItemSchema(BaseModel):
     product_id: str
-    quantity: int
-    price: float
+    quantity: int = Field(gt=0, description="Quantity must be at least 1")
+    price: float = Field(gt=0.0, description="Price must be greater than 0")
 
 class OrderCreateSchema(BaseModel):
-    user_id: int
-    items: List[OrderItemSchema]
+    user_id: int = Field(gt=0, description="User ID must be positive")
+    items: List[OrderItemSchema] = Field(min_length=1, description="Order must contain at least one item")
 
 class OrderResponseSchema(BaseModel):
     id: int
@@ -208,7 +216,7 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
 def create_order(order: OrderCreateSchema, db: Session = Depends(get_db)):
     total = sum(item.price * item.quantity for item in order.items)
     
-    items_list = [item.dict() for item in order.items]
+    items_list = [item.model_dump() if hasattr(item, 'model_dump') else item.dict() for item in order.items]
     
     db_order = Order(
         user_id=order.user_id,
