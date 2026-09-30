@@ -72,16 +72,50 @@ def connect_with_retry(rabbitmq_host, max_attempts=10):
             time.sleep(sleep_time)
     return None
 
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
+import signal
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path in ('/health', '/api/notifications/health'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "healthy",
+                "service": "notification-service"
+            }).encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # Suppress noisy default http server access logs
+
+def start_health_server(port=8001):
+    try:
+        server = HTTPServer(('0.0.0.0', port), HealthHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        log_event("info", f"Health check server listening on port {port}")
+        return server
+    except Exception as e:
+        log_event("warn", f"Could not start health check server: {e}")
+        return None
+
 def main():
     rabbitmq_host = os.getenv('RABBITMQ_HOST', 'rabbitmq')
     queue_name = 'order_notifications'
+    health_port = int(os.getenv('HEALTH_PORT', '8001'))
     
+    start_health_server(port=health_port)
     log_event("info", "Notification Service starting up...")
     
     connection = connect_with_retry(rabbitmq_host)
             
     if not connection:
-        print("Failed to connect to RabbitMQ after 10 attempts. Exiting.", flush=True)
+        log_event("error", "Failed to connect to RabbitMQ after retries. Exiting.")
         sys.exit(1)
         
     channel = connection.channel()
@@ -90,12 +124,26 @@ def main():
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue=queue_name, on_message_callback=callback)
     
-    print(' [*] Waiting for notification messages. To exit press CTRL+C', flush=True)
+    # Graceful shutdown handler
+    def handle_signal(sig, frame):
+        log_event("info", f"Received signal {sig}. Initiating graceful worker shutdown...")
+        try:
+            channel.stop_consuming()
+            connection.close()
+        except Exception:
+            pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    log_event("info", " [*] Waiting for notification messages. To exit press CTRL+C")
     try:
         channel.start_consuming()
-    except KeyboardInterrupt:
-        print('Interrupted', flush=True)
-        connection.close()
+    except Exception as e:
+        log_event("error", f"Consumer terminated: {e}")
+        if connection and connection.is_open:
+            connection.close()
 
 if __name__ == '__main__':
     # Simple boilerplate check
