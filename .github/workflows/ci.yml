@@ -27,40 +27,47 @@ jobs:
           recursive: true
           ignore: DL3018,DL3008 # Ignore pin packages warnings for alpine/debian
 
-      # User Service CI
+      # User Service CI: Lint & Unit/Integration Tests
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install User Service Dependencies & Build
+      - name: Install User Service Dependencies & Test
         run: |
           cd services/user-service
           npm install
-          # npm test --if-present
+          npm test
 
-      # Catalog Service CI
+      # Catalog Service CI: Build & Tests
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
 
-      - name: Build Go Catalog Service
+      - name: Build & Test Go Catalog Service
         run: |
           cd services/catalog-service
-          # Fetch dependencies and build
           go get -d -v ./...
           go build -v ./...
+          go test -v ./...
 
-      # Order & Notification Services CI
+      # Order & Notification Services CI: Lint & Pytest Tests
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Lint Python Services
+      - name: Lint and Test Python Services
         run: |
-          pip install flake8
-          # run flake8, ignore line length checks
+          pip install flake8 pytest httpx
           flake8 services/order-service services/notification-service --max-line-length=120 --exclude=venv,.venv
+          
+          # Run Order Service Pytest suite
+          pip install -r services/order-service/requirements.txt
+          pytest services/order-service/tests
+
+          # Run Notification Service Pytest suite
+          pip install -r services/notification-service/requirements.txt
+          pytest services/notification-service/tests
