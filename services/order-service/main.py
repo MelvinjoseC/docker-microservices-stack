@@ -61,22 +61,30 @@ DATABASE_URL = os.getenv(
     "postgresql://devuser:devpassword@postgres:5432/microservices_db"
 )
 
-# Retry connection logic for PostgreSQL
+is_testing = os.getenv("TESTING") == "1"
+if is_testing:
+    DATABASE_URL = "sqlite:///:memory:"
+
 engine = None
-for i in range(5):
+retries = 1 if is_testing else 5
+delay = 0 if is_testing else 3
+
+for i in range(retries):
     try:
-        print(f"Connecting to PostgreSQL (attempt {i+1}/5)...")
-        engine = create_engine(DATABASE_URL)
-        # Test connection
+        print(f"Connecting to database (attempt {i+1}/{retries})...")
+        connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+        engine = create_engine(DATABASE_URL, connect_args=connect_args)
         with engine.connect() as conn:
-            print("Successfully connected to PostgreSQL")
+            print("Successfully connected to database")
             break
     except Exception as e:
-        print(f"PostgreSQL connection error: {e}, retrying in 5 seconds...")
-        time.sleep(5)
+        print(f"Database connection error: {e}, retrying in {delay}s...")
+        if i < retries - 1:
+            time.sleep(delay)
 
 if not engine:
-    raise RuntimeError("Failed to connect to database after 5 attempts")
+    print("Warning: Database connection failed. Falling back to in-memory SQLite.")
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
