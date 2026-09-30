@@ -139,24 +139,75 @@ if db.query(Order).count() == 0:
     print("Database seeded with default orders.")
 db.close()
 
+class RabbitMQPublisher:
+    def __init__(self, host=None):
+        self.host = host or os.getenv("RABBITMQ_HOST", "rabbitmq")
+        self.connection = None
+        self.channel = None
+
+    def get_channel(self):
+        try:
+            if self.connection and self.connection.is_open and self.channel and self.channel.is_open:
+                return self.channel
+            self.connection = pika.BlockingConnection(
+                pika.ConnectionParameters(host=self.host, connection_attempts=3, retry_delay=2)
+            )
+            self.channel = self.connection.channel()
+            self.channel.queue_declare(queue='order_notifications', durable=True)
+            return self.channel
+        except Exception as e:
+            print(f"RabbitMQ connection failed: {e}", flush=True)
+            return None
+
+    def publish_order_notification(self, message_dict):
+        channel = self.get_channel()
+        if not channel:
+            print("Warning: Skipping message publication, RabbitMQ unavailable", flush=True)
+            return False
+        try:
+            channel.basic_publish(
+                exchange='',
+                routing_key='order_notifications',
+                body=json.dumps(message_dict),
+                properties=pika.BasicProperties(delivery_mode=2)
+            )
+            print(" [x] Sent order notification event to RabbitMQ", flush=True)
+            return True
+        except Exception as err:
+            print(f"Error publishing message: {err}", flush=True)
+            self.connection = None
+            return False
+
+publisher = RabbitMQPublisher()
+
+class OrderStatusUpdateSchema(BaseModel):
+    status: str
+
 @app.get("/health")
+@app.get("/api/orders/health")
 def health_check(db: Session = Depends(get_db)):
     try:
-        # Simple query to check DB availability
-        db.execute(Base.metadata.tables["orders"].select().limit(1))
+        from sqlalchemy import text
+        db.execute(text("SELECT 1"))
         return {"status": "healthy", "database": "connected", "service": "order-service"}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e), "service": "order-service"}
 
 @app.get("/api/orders", response_model=List[OrderResponseSchema])
 def get_orders(db: Session = Depends(get_db)):
-    return db.query(Order).all()
+    return db.query(Order).order_by(Order.id.asc()).all()
+
+@app.get("/api/orders/{order_id}", response_model=OrderResponseSchema)
+def get_order(order_id: int, db: Session = Depends(get_db)):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return order
 
 @app.post("/api/orders", response_model=OrderResponseSchema, status_code=201)
 def create_order(order: OrderCreateSchema, db: Session = Depends(get_db)):
     total = sum(item.price * item.quantity for item in order.items)
     
-    # Convert Pydantic schemas to dict for JSON column storing
     items_list = [item.dict() for item in order.items]
     
     db_order = Order(
@@ -171,32 +222,35 @@ def create_order(order: OrderCreateSchema, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(db_order)
         
-        # Publish event to RabbitMQ
-        try:
-            rabbitmq_host = os.getenv("RABBITMQ_HOST", "rabbitmq")
-            connection = pika.BlockingConnection(pika.ConnectionParameters(host=rabbitmq_host))
-            channel = connection.channel()
-            channel.queue_declare(queue='order_notifications', durable=True)
-            message = {
-                "id": db_order.id,
-                "user_id": db_order.user_id,
-                "total_amount": db_order.total_amount,
-                "items": items_list
-            }
-            channel.basic_publish(
-                exchange='',
-                routing_key='order_notifications',
-                body=json.dumps(message),
-                properties=pika.BasicProperties(
-                    delivery_mode=2,  # make message persistent
-                )
-            )
-            connection.close()
-            print(" [x] Sent order notification event to RabbitMQ", flush=True)
-        except Exception as mq_err:
-            print(f"Failed to publish RabbitMQ message: {mq_err}", flush=True)
+        # Publish async notification event to RabbitMQ broker
+        notification_payload = {
+            "id": db_order.id,
+            "user_id": db_order.user_id,
+            "total_amount": db_order.total_amount,
+            "items": items_list
+        }
+        publisher.publish_order_notification(notification_payload)
 
         return db_order
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.patch("/api/orders/{order_id}/status", response_model=OrderResponseSchema)
+def update_order_status(order_id: int, update: OrderStatusUpdateSchema, db: Session = Depends(get_db)):
+    db_order = db.query(Order).filter(Order.id == order_id).first()
+    if not db_order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    db_order.status = update.status.upper()
+    db.commit()
+    db.refresh(db_order)
+    return db_order
+
+@app.delete("/api/orders/{order_id}", status_code=200)
+def delete_order(order_id: int, db: Session = Depends(get_db)):
+    db_order = db.query(Order).filter(Order.id == order_id).first()
+    if not db_order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    db.delete(db_order)
+    db.commit()
+    return {"message": f"Order #{order_id} successfully deleted"}
