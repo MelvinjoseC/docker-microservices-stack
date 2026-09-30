@@ -19,8 +19,12 @@ const httpRequestsTotal = new client.Counter({
 app.use(cors());
 app.use(express.json());
 
-// Track all HTTP requests and log them in JSON format
+// Track all HTTP requests with correlation IDs and log them in JSON format
 app.use((req, res, next) => {
+  const correlationId = req.headers['x-correlation-id'] || req.headers['x-request-id'] || `user-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  req.correlationId = correlationId;
+  res.setHeader('X-Correlation-ID', correlationId);
+
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
@@ -31,6 +35,7 @@ app.use((req, res, next) => {
     });
     console.log(JSON.stringify({
       timestamp: new Date().toISOString(),
+      correlation_id: correlationId,
       level: res.statusCode >= 400 ? 'error' : 'info',
       message: `${req.method} ${req.url} - ${res.statusCode}`,
       service: 'user-service',
@@ -218,7 +223,32 @@ app.delete('/api/users/:id', async (req, res) => {
   }
 });
 
-const server = app.listen(PORT, async () => {
-  console.log(`User Service running on port ${PORT}`);
-  await connectDb();
-});
+let server;
+if (process.env.NODE_ENV !== 'test') {
+  server = app.listen(PORT, async () => {
+    console.log(`User Service running on port ${PORT}`);
+    await connectDb();
+  });
+
+  const gracefulShutdown = async (signal) => {
+    console.log(`Received ${signal}. Gracefully terminating User Service...`);
+    if (server) {
+      server.close(async () => {
+        console.log('HTTP server closed.');
+        try {
+          await sequelize.close();
+          console.log('PostgreSQL connections closed.');
+          process.exit(0);
+        } catch (err) {
+          console.error('Error closing database connections:', err);
+          process.exit(1);
+        }
+      });
+    }
+  };
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+}
+
+module.exports = { app, sequelize, User, connectDb };
