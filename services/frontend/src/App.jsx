@@ -33,16 +33,19 @@ function App() {
 
   const fetchHealth = async () => {
     try {
-      const res = await fetch('/health');
+      const res = await fetch('/health', { signal: AbortSignal.timeout(4000) });
       if (res.ok) setHealth(prev => ({ ...prev, gateway: 'healthy' }));
       else setHealth(prev => ({ ...prev, gateway: 'unhealthy' }));
     } catch {
       setHealth(prev => ({ ...prev, gateway: 'unhealthy' }));
     }
 
-    const checkService = async (url, key) => {
+    const checkService = async (url, fallbackUrl, key) => {
       try {
-        const res = await fetch(url);
+        let res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+        if (!res.ok && fallbackUrl) {
+          res = await fetch(fallbackUrl, { signal: AbortSignal.timeout(4000) });
+        }
         if (res.ok) {
           const data = await res.json();
           if (data.status === 'healthy') {
@@ -58,9 +61,9 @@ function App() {
       }
     };
 
-    checkService('/api/users/health', 'users');
-    checkService('/api/products/health', 'catalog');
-    checkService('/api/orders/health', 'orders');
+    checkService('/api/users/health', '/health', 'users');
+    checkService('/api/products/health', '/health', 'catalog');
+    checkService('/api/orders/health', '/health', 'orders');
   };
 
   const fetchData = async () => {
