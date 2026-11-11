@@ -1,4 +1,4 @@
-.PHONY: up down build logs restart status test test-unit clean backup restore benchmark
+.PHONY: up down build logs restart status test test-unit test-e2e clean backup restore benchmark
 
 # Default shell
 SHELL := /bin/bash
@@ -41,6 +41,10 @@ test-unit:
 	cd services/catalog-service && go test -v ./...
 	pytest services/order-service/tests
 	pytest services/notification-service/tests
+
+test-e2e:
+	@echo "Running End-to-End integration smoke tests..."
+	python3 ./scripts/e2e-test.py localhost
 
 backup:
 	@echo "Creating database backup..."
