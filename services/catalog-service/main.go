@@ -19,10 +19,15 @@ import (
 )
 
 type Product struct {
-	ID    string  `bson:"_id,omitempty" json:"id"`
-	Name  string  `bson:"name" json:"name"`
-	Price float64 `bson:"price" json:"price"`
-	Stock int     `bson:"stock" json:"stock"`
+	ID       string  `bson:"_id,omitempty" json:"id"`
+	Name     string  `bson:"name" json:"name"`
+	Price    float64 `bson:"price" json:"price"`
+	Stock    int     `bson:"stock" json:"stock"`
+	Category string  `bson:"category,omitempty" json:"category,omitempty"`
+}
+
+type StockAdjustmentRequest struct {
+	Quantity int `json:"quantity"`
 }
 
 var (
@@ -327,6 +332,108 @@ func setupRouter() *gin.Engine {
 		}
 
 		c.JSON(http.StatusOK, gin.H{"message": "Product successfully deleted"})
+	})
+
+	// Reserve stock atomically for order checkout
+	r.POST("/api/products/:id/reserve", func(c *gin.Context) {
+		if !isMongoConnect {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database not connected"})
+			return
+		}
+
+		id := c.Param("id")
+		var req StockAdjustmentRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+			return
+		}
+
+		if req.Quantity <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Reservation quantity must be greater than zero"})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Attempt atomic deduction with stock >= quantity condition
+		filter := bson.M{
+			"_id":   id,
+			"stock": bson.M{"$gte": req.Quantity},
+		}
+		update := bson.M{
+			"$inc": bson.M{"stock": -req.Quantity},
+		}
+
+		res, err := productCol.UpdateOne(ctx, filter, update)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if res.MatchedCount == 0 {
+			// Check if item exists to distinguish out-of-stock from 404
+			count, err := productCol.CountDocuments(ctx, bson.M{"_id": id})
+			if err == nil && count > 0 {
+				c.JSON(http.StatusConflict, gin.H{"error": "Insufficient stock available for reservation"})
+				return
+			}
+			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+			return
+		}
+
+		var updated Product
+		_ = productCol.FindOne(ctx, bson.M{"_id": id}).Decode(&updated)
+		c.JSON(http.StatusOK, gin.H{
+			"message":  "Stock reserved successfully",
+			"product":  updated,
+			"reserved": req.Quantity,
+		})
+	})
+
+	// Restock / replenish inventory
+	r.POST("/api/products/:id/restock", func(c *gin.Context) {
+		if !isMongoConnect {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database not connected"})
+			return
+		}
+
+		id := c.Param("id")
+		var req StockAdjustmentRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+			return
+		}
+
+		if req.Quantity <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Restock quantity must be greater than zero"})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		filter := bson.M{"_id": id}
+		update := bson.M{"$inc": bson.M{"stock": req.Quantity}}
+
+		res, err := productCol.UpdateOne(ctx, filter, update)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if res.MatchedCount == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+			return
+		}
+
+		var updated Product
+		_ = productCol.FindOne(ctx, bson.M{"_id": id}).Decode(&updated)
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Stock replenished successfully",
+			"product": updated,
+			"added":   req.Quantity,
+		})
 	})
 
 	return r

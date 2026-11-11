@@ -66,4 +66,28 @@ func TestCatalogServiceEndpoints(t *testing.T) {
 			t.Errorf("Expected 400 or 503 for invalid product payload, got %d", w.Code)
 		}
 	})
+
+	t.Run("Reserve Stock Payload Validation", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		jsonPayload := []byte(`{"quantity": 0}`)
+		req, _ := http.NewRequest("POST", "/api/products/p1/reserve", bytes.NewBuffer(jsonPayload))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest && w.Code != http.StatusServiceUnavailable {
+			t.Errorf("Expected 400 or 503 for zero reservation quantity, got %d", w.Code)
+		}
+	})
+
+	t.Run("Restock Inventory Payload Validation", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		jsonPayload := []byte(`{"quantity": -5}`)
+		req, _ := http.NewRequest("POST", "/api/products/p1/restock", bytes.NewBuffer(jsonPayload))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest && w.Code != http.StatusServiceUnavailable {
+			t.Errorf("Expected 400 or 503 for negative restock quantity, got %d", w.Code)
+		}
+	})
 }
