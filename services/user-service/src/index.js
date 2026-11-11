@@ -2,9 +2,12 @@ const express = require('express');
 const cors = require('cors');
 const { Sequelize, DataTypes } = require('sequelize');
 const client = require('prom-client');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-microservices-stack-2026';
 
 // Prometheus metrics configuration
 const collectDefaultMetrics = client.collectDefaultMetrics;
@@ -85,6 +88,10 @@ const User = sequelize.define('User', {
       isEmail: true
     }
   },
+  password: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
   role: {
     type: DataTypes.STRING,
     defaultValue: 'user'
@@ -92,6 +99,37 @@ const User = sequelize.define('User', {
 }, {
   timestamps: true
 });
+
+// Authentication helpers
+function sanitizeUser(user) {
+  if (!user) return null;
+  const plain = typeof user.toJSON === 'function' ? user.toJSON() : { ...user };
+  delete plain.password;
+  return plain;
+}
+
+function generateToken(user) {
+  return jwt.sign(
+    { id: user.id, email: user.email, role: user.role },
+    JWT_SECRET,
+    { expiresIn: '24h' }
+  );
+}
+
+function authMiddleware(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Authorization header with Bearer token required' });
+  }
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired authentication token' });
+  }
+}
 
 // Database Sync and Setup
 let isDbConnected = false;
@@ -107,9 +145,10 @@ async function connectDb(retries = 5, delay = 5000) {
       // Seed initial users if empty
       const count = await User.count();
       if (count === 0) {
+        const defaultHash = await bcrypt.hash('password123', 10);
         await User.bulkCreate([
-          { name: 'Alice Smith', email: 'alice@example.com', role: 'admin' },
-          { name: 'Bob Jones', email: 'bob@example.com', role: 'user' }
+          { name: 'Alice Smith', email: 'alice@example.com', password: defaultHash, role: 'admin' },
+          { name: 'Bob Jones', email: 'bob@example.com', password: defaultHash, role: 'user' }
         ]);
         console.log('Seeded default users.');
       }
@@ -146,7 +185,84 @@ app.get('/api/users', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 50, 100);
     const offset = parseInt(req.query.offset) || 0;
     const users = await User.findAll({ limit, offset, order: [['id', 'ASC']] });
-    res.json(users);
+    res.json(users.map(sanitizeUser));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// User Registration with Password Hashing & JWT
+app.post('/api/users/register', async (req, res) => {
+  const { name, email, password, role } = req.body;
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'Name, email, and password are required' });
+  }
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ error: 'Invalid email address format' });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+  }
+
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = await User.create({
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      password: hashedPassword,
+      role: role || 'user'
+    });
+    const token = generateToken(newUser);
+    res.status(201).json({
+      user: sanitizeUser(newUser),
+      token
+    });
+  } catch (error) {
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({ error: 'Email already exists' });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// User Login & JWT Generation
+app.post('/api/users/login', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+
+  try {
+    const user = await User.findOne({ where: { email: email.trim().toLowerCase() } });
+    if (!user || !user.password) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const isValid = await bcrypt.compare(password, user.password);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const token = generateToken(user);
+    res.json({
+      message: 'Authentication successful',
+      user: sanitizeUser(user),
+      token
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Authenticated User Profile Endpoint
+app.get('/api/users/me', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findByPk(req.user.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User profile not found' });
+    }
+    res.json(sanitizeUser(user));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -158,14 +274,14 @@ app.get('/api/users/:id', async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    res.json(user);
+    res.json(sanitizeUser(user));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 app.post('/api/users', async (req, res) => {
-  const { name, email, role } = req.body;
+  const { name, email, role, password } = req.body;
   if (!name || !email) {
     return res.status(400).json({ error: 'Name and email are required' });
   }
@@ -174,8 +290,14 @@ app.post('/api/users', async (req, res) => {
     return res.status(400).json({ error: 'Invalid email address format' });
   }
   try {
-    const newUser = await User.create({ name: name.trim(), email: email.trim().toLowerCase(), role: role || 'user' });
-    res.status(201).json(newUser);
+    const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
+    const newUser = await User.create({
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      password: hashedPassword,
+      role: role || 'user'
+    });
+    res.status(201).json(sanitizeUser(newUser));
   } catch (error) {
     if (error.name === 'SequelizeUniqueConstraintError') {
       return res.status(409).json({ error: 'Email already exists' });
@@ -190,7 +312,7 @@ app.put('/api/users/:id', async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    const { name, email, role } = req.body;
+    const { name, email, role, password } = req.body;
     if (email) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) {
@@ -200,8 +322,9 @@ app.put('/api/users/:id', async (req, res) => {
     }
     if (name) user.name = name.trim();
     if (role) user.role = role;
+    if (password) user.password = await bcrypt.hash(password, 10);
     await user.save();
-    res.json(user);
+    res.json(sanitizeUser(user));
   } catch (error) {
     if (error.name === 'SequelizeUniqueConstraintError') {
       return res.status(409).json({ error: 'Email already exists' });
@@ -251,4 +374,4 @@ if (process.env.NODE_ENV !== 'test') {
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
-module.exports = { app, sequelize, User, connectDb };
+module.exports = { app, sequelize, User, connectDb, generateToken, authMiddleware, JWT_SECRET, sanitizeUser };

@@ -77,4 +77,77 @@ describe('User Service Integration Tests', () => {
       expect(res.body.error).toBe('User not found');
     });
   });
+
+  describe('Authentication & JWT Security', () => {
+    it('should reject registration when password is less than 6 characters', async () => {
+      const res = await request(app)
+        .post('/api/users/register')
+        .send({ name: 'Short Pass', email: 'short@example.com', password: '123' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain('Password must be at least 6 characters long');
+    });
+
+    it('should register a new user and return JWT token', async () => {
+      jest.spyOn(User, 'create').mockResolvedValueOnce({
+        id: 10,
+        name: 'New Dev',
+        email: 'dev@example.com',
+        role: 'user',
+        toJSON: () => ({ id: 10, name: 'New Dev', email: 'dev@example.com', role: 'user', password: 'hash' })
+      });
+
+      const res = await request(app)
+        .post('/api/users/register')
+        .send({ name: 'New Dev', email: 'dev@example.com', password: 'password123' });
+
+      expect(res.statusCode).toBe(201);
+      expect(res.body).toHaveProperty('token');
+      expect(res.body.user).toHaveProperty('email', 'dev@example.com');
+      expect(res.body.user).not.toHaveProperty('password');
+    });
+
+    it('should reject login with wrong password', async () => {
+      const bcrypt = require('bcryptjs');
+      const hash = await bcrypt.hash('correctPassword', 10);
+      jest.spyOn(User, 'findOne').mockResolvedValueOnce({
+        id: 1,
+        email: 'test@example.com',
+        password: hash,
+        role: 'user'
+      });
+
+      const res = await request(app)
+        .post('/api/users/login')
+        .send({ email: 'test@example.com', password: 'wrongPassword' });
+
+      expect(res.statusCode).toBe(401);
+      expect(res.body.error).toBe('Invalid email or password');
+    });
+
+    it('should reject access to /api/users/me without Bearer token', async () => {
+      const res = await request(app).get('/api/users/me');
+      expect(res.statusCode).toBe(401);
+      expect(res.body.error).toContain('Authorization header with Bearer token required');
+    });
+
+    it('should access /api/users/me with valid Bearer token', async () => {
+      const { generateToken } = require('../src/index');
+      const mockUser = { id: 5, email: 'auth@example.com', role: 'admin' };
+      const token = generateToken(mockUser);
+
+      jest.spyOn(User, 'findByPk').mockResolvedValueOnce({
+        ...mockUser,
+        toJSON: () => ({ ...mockUser, password: 'secret-hash' })
+      });
+
+      const res = await request(app)
+        .get('/api/users/me')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.email).toBe('auth@example.com');
+      expect(res.body).not.toHaveProperty('password');
+    });
+  });
 });
