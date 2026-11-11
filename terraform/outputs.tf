@@ -33,6 +33,11 @@ output "eks_cluster_oidc_issuer" {
   value       = aws_eks_cluster.main.identity[0].oidc[0].issuer
 }
 
+output "eks_cluster_oidc_provider_arn" {
+  description = "ARN of the IAM OIDC Provider for Kubernetes IRSA"
+  value       = aws_iam_openid_connect_provider.eks.arn
+}
+
 output "eks_kubeconfig_command" {
   description = "AWS CLI command to update kubeconfig for the cluster"
   value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${aws_eks_cluster.main.name}"
