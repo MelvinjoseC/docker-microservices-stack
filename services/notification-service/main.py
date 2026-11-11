@@ -9,6 +9,19 @@ from datetime import datetime
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 DLQ_QUEUE_NAME = 'order_notifications_dlq'
+PROCESSED_ORDERS = set()
+
+# Notification Dispatcher Channels
+class EmailChannel:
+    def send(self, order_id, user_id, total_amount):
+        return f"[EMAIL DISPATCHED] To: user_{user_id}@example.com | Subject: Order #{order_id} Confirmed ($ {total_amount})"
+
+class WebhookChannel:
+    def send(self, order_id, user_id, total_amount):
+        return f"[WEBHOOK DELIVERED] Event: order.notification | Order: {order_id} | Amount: ${total_amount}"
+
+EMAIL_CHANNEL = EmailChannel()
+WEBHOOK_CHANNEL = WebhookChannel()
 
 NOTIFICATIONS_PROCESSED = Counter(
     'notifications_processed_total',
@@ -39,11 +52,26 @@ def callback(ch, method, properties, body):
         data = json.loads(body)
         order_id = data.get('id')
         user_id = data.get('user_id')
+        total_amount = data.get('total_amount', 0.0)
+
+        # Idempotent deduplication guard
+        if order_id and order_id in PROCESSED_ORDERS:
+            log_event("info", f"Deduplication Guard: Order #{order_id} already notified. Skipping redundant dispatch.", order_id=order_id)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
         log_event("info", f"Notification Received: Processing order #{order_id} for User #{user_id}", order_id=order_id, user_id=user_id)
         
-        # Simulate processing notification (email/SMS)
+        # Dispatch via multi-channel notification engine
+        email_status = EMAIL_CHANNEL.send(order_id, user_id, total_amount)
+        webhook_status = WEBHOOK_CHANNEL.send(order_id, user_id, total_amount)
+        
         time.sleep(0.05)
-        log_event("info", f"Notification Sent successfully for order #{order_id}", order_id=order_id)
+        log_event("info", f"Notification Dispatched successfully: {email_status} | {webhook_status}", order_id=order_id)
+        
+        if order_id:
+            PROCESSED_ORDERS.add(order_id)
+
         NOTIFICATIONS_PROCESSED.inc()
         NOTIFICATION_LATENCY.observe(time.time() - start_time)
         ch.basic_ack(delivery_tag=method.delivery_tag)
