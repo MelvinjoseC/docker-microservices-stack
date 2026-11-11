@@ -100,6 +100,7 @@ class Order(Base):
     total_amount = Column(Float, nullable=False)
     status = Column(String, default="PENDING")
     items = Column(JSON, nullable=False)  # Store items list as JSON
+    status_history = Column(JSON, default=list)  # Audit trail of status transitions
 
 class IdempotencyRecord(Base):
     __tablename__ = "idempotency_records"
@@ -137,9 +138,19 @@ class OrderResponseSchema(BaseModel):
     total_amount: float
     status: str
     items: List[OrderItemSchema]
+    status_history: Optional[List[dict]] = None
 
     class Config:
         from_attributes = True
+
+ALLOWED_STATUS_TRANSITIONS = {
+    "PENDING": {"CONFIRMED", "CANCELLED"},
+    "CONFIRMED": {"PROCESSING", "CANCELLED"},
+    "PROCESSING": {"SHIPPED", "CANCELLED"},
+    "SHIPPED": {"DELIVERED"},
+    "DELIVERED": set(),
+    "CANCELLED": set()
+}
 
 # Seed database if empty
 db = SessionLocal()
@@ -282,12 +293,14 @@ def create_order(request: Request, order: OrderCreateSchema, db: Session = Depen
     total = sum(item.price * item.quantity for item in order.items)
     
     items_list = [item.model_dump() if hasattr(item, 'model_dump') else item.dict() for item in order.items]
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     
     db_order = Order(
         user_id=order.user_id,
         total_amount=total,
         status="PENDING",
-        items=items_list
+        items=items_list,
+        status_history=[{"status": "PENDING", "timestamp": now_iso}]
     )
     
     try:
@@ -332,7 +345,24 @@ def update_order_status(order_id: int, update: OrderStatusUpdateSchema, db: Sess
     db_order = db.query(Order).filter(Order.id == order_id).first()
     if not db_order:
         raise HTTPException(status_code=404, detail="Order not found")
-    db_order.status = update.status.upper()
+    
+    current_status = db_order.status.upper()
+    next_status = update.status.upper()
+
+    allowed = ALLOWED_STATUS_TRANSITIONS.get(current_status, set())
+    if next_status not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid order status transition from {current_status} to {next_status}. Allowed transitions: {sorted(list(allowed))}"
+        )
+
+    db_order.status = next_status
+    history = list(db_order.status_history or [])
+    history.append({
+        "status": next_status,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    })
+    db_order.status_history = history
     db.commit()
     db.refresh(db_order)
     return db_order

@@ -94,3 +94,25 @@ def test_create_order_idempotency():
 
     assert order1["id"] == order2["id"]
     assert order1["total_amount"] == order2["total_amount"]
+
+def test_order_state_machine_valid_transition():
+    # Create order in PENDING
+    payload = {"user_id": 1, "items": [{"product_id": "p1", "quantity": 1, "price": 10.0}]}
+    create_resp = client.post("/api/orders", json=payload)
+    order_id = create_resp.json()["id"]
+
+    # Transition to CONFIRMED
+    patch_resp = client.patch(f"/api/orders/{order_id}/status", json={"status": "CONFIRMED"})
+    assert patch_resp.status_code == 200
+    assert patch_resp.json()["status"] == "CONFIRMED"
+
+def test_order_state_machine_invalid_transition():
+    # Create order in PENDING
+    payload = {"user_id": 1, "items": [{"product_id": "p1", "quantity": 1, "price": 10.0}]}
+    create_resp = client.post("/api/orders", json=payload)
+    order_id = create_resp.json()["id"]
+
+    # Attempt illegal jump directly from PENDING to DELIVERED
+    patch_resp = client.patch(f"/api/orders/{order_id}/status", json={"status": "DELIVERED"})
+    assert patch_resp.status_code == 400
+    assert "Invalid order status transition" in patch_resp.json()["detail"]
