@@ -109,6 +109,52 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "id": 5,
+      "title": "Notification Service - Events Processed Rate",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "editorMode": "code",
+          "expr": "rate(notifications_processed_total[1m]) or vector(0)",
+          "legendFormat": "Processed Notifications/sec",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "id": 6,
+      "title": "RabbitMQ Dead Letter Queue (DLQ) Failure Rate",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "editorMode": "code",
+          "expr": "rate(notifications_failed_total[1m]) or vector(0)",
+          "legendFormat": "DLQ Failures/sec",
+          "range": true,
+          "refId": "A"
+        }
+      ]
     }
   ],
   "refresh": "5s",
