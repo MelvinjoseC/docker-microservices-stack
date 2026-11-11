@@ -90,4 +90,14 @@ func TestCatalogServiceEndpoints(t *testing.T) {
 			t.Errorf("Expected 400 or 503 for negative restock quantity, got %d", w.Code)
 		}
 	})
+
+	t.Run("Product Search and Pagination Routing", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/api/products?search=Laptop&category=Electronics&limit=5&skip=0&sort_by=price&sort_order=desc", nil)
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK && w.Code != http.StatusServiceUnavailable {
+			t.Errorf("Expected 200 or 503 for products search query, got %d", w.Code)
+		}
+	})
 }

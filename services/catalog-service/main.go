@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -78,9 +79,11 @@ func initMongoDB() {
 
 	if count == 0 {
 		initialProducts := []interface{}{
-			Product{ID: "p1", Name: "Developer Laptop", Price: 1299.99, Stock: 50},
-			Product{ID: "p2", Name: "Mechanical Keyboard", Price: 89.99, Stock: 150},
-			Product{ID: "p3", Name: "Ergonomic Chair", Price: 349.99, Stock: 20},
+			Product{ID: "p1", Name: "Developer Laptop", Price: 1299.99, Stock: 50, Category: "Electronics"},
+			Product{ID: "p2", Name: "Mechanical Keyboard", Price: 89.99, Stock: 150, Category: "Accessories"},
+			Product{ID: "p3", Name: "Ergonomic Chair", Price: 349.99, Stock: 20, Category: "Furniture"},
+			Product{ID: "p4", Name: "4K Monitor 27-inch", Price: 399.99, Stock: 35, Category: "Electronics"},
+			Product{ID: "p5", Name: "Noise-Cancelling Headphones", Price: 199.99, Stock: 80, Category: "Audio"},
 		}
 		_, err := productCol.InsertMany(context.Background(), initialProducts)
 		if err != nil {
@@ -174,7 +177,7 @@ func setupRouter() *gin.Engine {
 	r.GET("/health", healthHandler)
 	r.GET("/api/products/health", healthHandler)
 
-	// Get all products with optional name filtering
+	// Get all products with optional search, category filtering, pagination, and sorting
 	r.GET("/api/products", func(c *gin.Context) {
 		if !isMongoConnect {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database not connected"})
@@ -190,7 +193,43 @@ func setupRouter() *gin.Engine {
 			filter["name"] = bson.M{"$regex": searchQuery, "$options": "i"}
 		}
 
-		cursor, err := productCol.Find(ctx, filter)
+		categoryQuery := c.Query("category")
+		if categoryQuery != "" {
+			filter["category"] = bson.M{"$regex": fmt.Sprintf("^%s$", categoryQuery), "$options": "i"}
+		}
+
+		// Pagination options
+		limitVal := int64(20)
+		if l := c.Query("limit"); l != "" {
+			if parsedLimit, err := strconv.ParseInt(l, 10, 64); err == nil && parsedLimit > 0 {
+				if parsedLimit > 100 {
+					parsedLimit = 100
+				}
+				limitVal = parsedLimit
+			}
+		}
+
+		skipVal := int64(0)
+		if s := c.Query("skip"); s != "" {
+			if parsedSkip, err := strconv.ParseInt(s, 10, 64); err == nil && parsedSkip >= 0 {
+				skipVal = parsedSkip
+			}
+		}
+
+		// Sorting options
+		sortField := c.DefaultQuery("sort_by", "name")
+		sortOrder := c.DefaultQuery("sort_order", "asc")
+		sortDirection := 1
+		if sortOrder == "desc" {
+			sortDirection = -1
+		}
+
+		findOptions := options.Find().
+			SetLimit(limitVal).
+			SetSkip(skipVal).
+			SetSort(bson.D{{Key: sortField, Value: sortDirection}})
+
+		cursor, err := productCol.Find(ctx, filter, findOptions)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -207,7 +246,14 @@ func setupRouter() *gin.Engine {
 			results = []Product{}
 		}
 
-		c.JSON(http.StatusOK, results)
+		totalCount, _ := productCol.CountDocuments(ctx, filter)
+
+		c.JSON(http.StatusOK, gin.H{
+			"products": results,
+			"total":    totalCount,
+			"limit":    limitVal,
+			"skip":     skipVal,
+		})
 	})
 
 	// Get product by ID
