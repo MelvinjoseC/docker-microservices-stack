@@ -68,6 +68,49 @@
         state: present
         reload: true
 
+    - name: Enable IPv4 packet forwarding for container networking
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        state: present
+        reload: true
+
+    - name: Tune TCP maximum socket listen backlog for high throughput
+      sysctl:
+        name: net.core.somaxconn
+        value: '65535'
+        state: present
+        reload: true
+
+    - name: Tune TCP SYN backlog queue
+      sysctl:
+        name: net.ipv4.tcp_max_syn_backlog
+        value: '8192'
+        state: present
+        reload: true
+
+    - name: Configure Docker daemon log rotation and live-restore
+      copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "50m",
+              "max-file": "3"
+            },
+            "live-restore": true,
+            "metrics-addr": "0.0.0.0:9323"
+          }
+        mode: '0644'
+      notify: restart docker
+
+  handlers:
+    - name: restart docker
+      service:
+        name: docker
+        state: restarted
+
     - name: Verify Docker installation
       command: docker --version
       register: docker_version
