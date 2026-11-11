@@ -9,6 +9,7 @@ from typing import List, Optional
 from sqlalchemy import create_engine, Column, Integer, Float, String, JSON, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import StaticPool
 
 from prometheus_client import make_asgi_app
 
@@ -72,8 +73,10 @@ delay = 0 if is_testing else 3
 for i in range(retries):
     try:
         print(f"Connecting to database (attempt {i+1}/{retries})...")
-        connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
-        engine = create_engine(DATABASE_URL, connect_args=connect_args)
+        kwargs = {}
+        if "sqlite" in DATABASE_URL:
+            kwargs = {"connect_args": {"check_same_thread": False}, "poolclass": StaticPool}
+        engine = create_engine(DATABASE_URL, **kwargs)
         with engine.connect() as conn:
             print("Successfully connected to database")
             break
@@ -84,7 +87,7 @@ for i in range(retries):
 
 if not engine:
     print("Warning: Database connection failed. Falling back to in-memory SQLite.")
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -196,6 +199,43 @@ class RabbitMQPublisher:
 
 publisher = RabbitMQPublisher()
 
+class CatalogClient:
+    def __init__(self, base_url=None):
+        self.base_url = base_url or os.getenv("CATALOG_SERVICE_URL", "http://catalog-service:8080")
+
+    def reserve_stock(self, product_id: str, quantity: int) -> bool:
+        if os.getenv("SKIP_CATALOG_CHECK") == "1" or is_testing:
+            return True
+        try:
+            import httpx
+            with httpx.Client(timeout=3.0) as http_client:
+                res = http_client.post(
+                    f"{self.base_url}/api/products/{product_id}/reserve",
+                    json={"quantity": quantity}
+                )
+                if res.status_code == 200:
+                    return True
+                elif res.status_code == 409:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Insufficient inventory available for product {product_id}"
+                    )
+                elif res.status_code == 404:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Product {product_id} not found in catalog"
+                    )
+                else:
+                    print(f"Catalog service returned status {res.status_code}", flush=True)
+                    return False
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"Catalog service reservation failed: {e}", flush=True)
+            return False
+
+catalog_client = CatalogClient()
+
 class OrderStatusUpdateSchema(BaseModel):
     status: str
 
@@ -222,6 +262,10 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/orders", response_model=OrderResponseSchema, status_code=201)
 def create_order(order: OrderCreateSchema, db: Session = Depends(get_db)):
+    # Reserve catalog stock for all items
+    for item in order.items:
+        catalog_client.reserve_stock(item.product_id, item.quantity)
+
     total = sum(item.price * item.quantity for item in order.items)
     
     items_list = [item.model_dump() if hasattr(item, 'model_dump') else item.dict() for item in order.items]

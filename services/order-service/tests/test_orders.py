@@ -1,9 +1,15 @@
 import os
+import sys
+
+# Ensure order-service directory is on Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["TESTING"] = "1"
 
 import pytest
+from unittest.mock import patch
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from main import app, Base, engine, SessionLocal, Order
+from main import app, Base, engine, SessionLocal, Order, catalog_client
 
 client = TestClient(app)
 
@@ -59,3 +65,13 @@ def test_create_order_success():
     assert data["user_id"] == 42
     assert data["total_amount"] == 200.0
     assert data["status"] == "PENDING"
+
+def test_create_order_insufficient_stock():
+    with patch.object(catalog_client, 'reserve_stock', side_effect=HTTPException(status_code=409, detail="Insufficient inventory")):
+        payload = {
+            "user_id": 1,
+            "items": [{"product_id": "p1", "quantity": 999, "price": 100.0}]
+        }
+        response = client.post("/api/orders", json=payload)
+        assert response.status_code == 409
+        assert "Insufficient inventory" in response.json()["detail"]
