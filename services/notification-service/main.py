@@ -6,8 +6,22 @@ import json
 import os
 import random
 from datetime import datetime
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 DLQ_QUEUE_NAME = 'order_notifications_dlq'
+
+NOTIFICATIONS_PROCESSED = Counter(
+    'notifications_processed_total',
+    'Total notifications successfully processed'
+)
+NOTIFICATIONS_FAILED = Counter(
+    'notifications_failed_total',
+    'Total notifications failed and routed to DLQ'
+)
+NOTIFICATION_LATENCY = Histogram(
+    'notification_processing_duration_seconds',
+    'Time spent processing notification in seconds'
+)
 
 def log_event(level, message, **kwargs):
     payload = {
@@ -20,6 +34,7 @@ def log_event(level, message, **kwargs):
     print(json.dumps(payload), flush=True)
 
 def callback(ch, method, properties, body):
+    start_time = time.time()
     try:
         data = json.loads(body)
         order_id = data.get('id')
@@ -27,10 +42,13 @@ def callback(ch, method, properties, body):
         log_event("info", f"Notification Received: Processing order #{order_id} for User #{user_id}", order_id=order_id, user_id=user_id)
         
         # Simulate processing notification (email/SMS)
-        time.sleep(0.5)
+        time.sleep(0.05)
         log_event("info", f"Notification Sent successfully for order #{order_id}", order_id=order_id)
+        NOTIFICATIONS_PROCESSED.inc()
+        NOTIFICATION_LATENCY.observe(time.time() - start_time)
         ch.basic_ack(delivery_tag=method.delivery_tag)
     except Exception as e:
+        NOTIFICATIONS_FAILED.inc()
         log_event("error", f"Error processing message: {str(e)}. Forwarding to DLQ.", error=str(e))
         try:
             # Route poison-pill or failed message to Dead Letter Queue
@@ -86,6 +104,12 @@ class HealthHandler(BaseHTTPRequestHandler):
                 "status": "healthy",
                 "service": "notification-service"
             }).encode('utf-8'))
+        elif self.path == '/metrics':
+            metrics_payload = generate_latest()
+            self.send_response(200)
+            self.send_header('Content-Type', CONTENT_TYPE_LATEST)
+            self.end_headers()
+            self.wfile.write(metrics_payload)
         else:
             self.send_response(404)
             self.end_headers()

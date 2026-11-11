@@ -1,3 +1,9 @@
+import os
+import sys
+
+# Ensure notification-service directory is on Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import json
 from unittest.mock import MagicMock
 import pytest
@@ -52,3 +58,20 @@ def test_health_server_handler():
     data = json.loads(handler.wfile.getvalue().decode('utf-8'))
     assert data["status"] == "healthy"
     assert data["service"] == "notification-service"
+
+def test_metrics_server_handler():
+    from main import HealthHandler
+    import io
+
+    handler = HealthHandler.__new__(HealthHandler)
+    handler.path = '/metrics'
+    handler.wfile = io.BytesIO()
+    handler.send_response = MagicMock()
+    handler.send_header = MagicMock()
+    handler.end_headers = MagicMock()
+
+    HealthHandler.do_GET(handler)
+
+    handler.send_response.assert_called_once_with(200)
+    output = handler.wfile.getvalue().decode('utf-8')
+    assert "notifications_processed_total" in output
