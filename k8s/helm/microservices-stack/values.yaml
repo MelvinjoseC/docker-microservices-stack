@@ -43,3 +43,8 @@ databases:
     password: devpassword
     db: catalog_db
     storage: 10Gi
+
+# PodDisruptionBudget configurations
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
