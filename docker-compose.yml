@@ -210,6 +210,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus/alert.rules.yml:/etc/prometheus/alert.rules.yml
       - prometheus_data:/prometheus
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
@@ -219,6 +220,20 @@ services:
       - user-service
       - catalog-service
       - order-service
+      - alertmanager
+
+  # Alertmanager (Alert Routing & Notification Engine)
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: dev-alertmanager
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    networks:
+      - backend-tier
 
   # Grafana (Metrics & Logs Visualizer)
   grafana:
@@ -290,5 +305,6 @@ volumes:
   mongo_data:
   rabbitmq_data:
   prometheus_data:
+  alertmanager_data:
   grafana_data:
   loki_data:
