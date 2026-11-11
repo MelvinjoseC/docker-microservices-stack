@@ -72,7 +72,7 @@ function App() {
       const res = await fetch('/api/products');
       if (res.ok) {
         const data = await res.json();
-        setProducts(data);
+        setProducts(Array.isArray(data) ? data : data.products || []);
       }
     } catch (e) {
       console.error("Error fetching products:", e);
@@ -137,6 +137,25 @@ function App() {
     }
   };
 
+  const handleUpdateOrderStatus = async (orderId, newStatus) => {
+    try {
+      const res = await fetch(`/api/orders/${orderId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (res.ok) {
+        addEvent(`Order #${orderId} status changed to ${newStatus}`, 'success');
+        fetchData();
+      } else {
+        const err = await res.json();
+        addEvent(`Could not update order #${orderId}: ${err.detail || 'Invalid transition'}`, 'error');
+      }
+    } catch (e) {
+      addEvent(`Error updating order status: ${e.message}`, 'error');
+    }
+  };
+
   const handlePlaceOrder = async (e) => {
     e.preventDefault();
     if (!selectedUserId || !selectedProductId || orderQuantity < 1) return;
@@ -144,6 +163,7 @@ function App() {
     const product = products.find(p => p.id.toString() === selectedProductId.toString());
     if (!product) return;
 
+    const idempotencyKey = `idem-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     const orderData = {
       user_id: parseInt(selectedUserId),
       items: [
@@ -158,26 +178,29 @@ function App() {
     try {
       const res = await fetch('/api/orders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': idempotencyKey
+        },
         body: JSON.stringify(orderData)
       });
 
       if (res.ok) {
         const order = await res.json();
-        addEvent(`Order #${order.id} placed successfully!`, 'success');
-        addEvent(`Event 'order_created' published to RabbitMQ exchange`, 'warn');
+        addEvent(`Order #${order.id} placed successfully! ($${order.total_amount})`, 'success');
+        addEvent(`Stock reserved & event published to RabbitMQ broker`, 'warn');
         
-        // Simulate async background notification consumption log on the UI
         setTimeout(() => {
-          addEvent(`Notification Service consumed event. Sending notification to User #${order.user_id}...`, 'info');
+          addEvent(`Notification Service dispatched confirmation for Order #${order.id}`, 'info');
         }, 1200);
-        setTimeout(() => {
-          addEvent(`Notification sent successfully via email stub!`, 'success');
-        }, 2500);
 
         fetchData();
+      } else if (res.status === 409) {
+        const err = await res.json();
+        addEvent(`Reservation rejected: ${err.detail || 'Insufficient stock'}`, 'error');
       } else {
-        addEvent(`Failed to place order`, 'error');
+        const err = await res.json();
+        addEvent(`Failed to place order: ${err.detail || 'Unknown error'}`, 'error');
       }
     } catch (e) {
       addEvent(`Failed to connect to Order service: ${e.message}`, 'error');
@@ -207,6 +230,11 @@ function App() {
           <div className="status-indicator">
             <span className={`dot ${health.orders === 'healthy' ? 'green' : health.orders === 'degraded' ? 'yellow' : 'red'}`}></span>
             Order Service
+          </div>
+          <div style={{ marginLeft: '1rem', display: 'flex', gap: '0.6rem' }}>
+            <a href="http://localhost:3000" target="_blank" rel="noreferrer" style={{ color: '#00f2fe', textDecoration: 'none', fontSize: '0.85rem' }}>📊 Grafana</a>
+            <a href="http://localhost:9090" target="_blank" rel="noreferrer" style={{ color: '#ff9a44', textDecoration: 'none', fontSize: '0.85rem' }}>🔥 Prometheus</a>
+            <a href="http://localhost:16686" target="_blank" rel="noreferrer" style={{ color: '#00e676', textDecoration: 'none', fontSize: '0.85rem' }}>🔍 Jaeger</a>
           </div>
         </div>
       </header>
@@ -245,8 +273,9 @@ function App() {
                   <tr>
                     <th>ID</th>
                     <th>Product Name</th>
+                    <th>Category</th>
                     <th>Price</th>
-                    <th>Stock status</th>
+                    <th>Stock Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -254,17 +283,20 @@ function App() {
                     <tr key={p.id}>
                       <td><code>{p.id}</code></td>
                       <td style={{ fontWeight: '600' }}>{p.name}</td>
+                      <td>
+                        <span className="badge pending">{p.category || 'General'}</span>
+                      </td>
                       <td>${p.price.toFixed(2)}</td>
                       <td>
-                        <span className={`badge ${p.stock > 0 ? 'completed' : 'failed'}`}>
-                          {p.stock > 0 ? `${p.stock} in stock` : 'out of stock'}
+                        <span className={`badge ${p.stock > 20 ? 'completed' : p.stock > 0 ? 'warn' : 'failed'}`}>
+                          {p.stock > 0 ? `${p.stock} units` : 'out of stock'}
                         </span>
                       </td>
                     </tr>
                   ))}
                   {products.length === 0 && (
                     <tr>
-                      <td colSpan="4" style={{ textAlign: 'center', color: 'rgba(255,255,255,0.4)' }}>
+                      <td colSpan="5" style={{ textAlign: 'center', color: 'rgba(255,255,255,0.4)' }}>
                         No products available.
                       </td>
                     </tr>
@@ -276,15 +308,16 @@ function App() {
 
           {activeTab === 'orders' && (
             <div className="panel">
-              <h2>Orders List ({orders.length})</h2>
+              <h2>Orders Registry ({orders.length})</h2>
               <table>
                 <thead>
                   <tr>
                     <th>Order ID</th>
                     <th>User ID</th>
-                    <th>Total Amount</th>
+                    <th>Total</th>
                     <th>Status</th>
-                    <th>Items Count</th>
+                    <th>Items</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -294,16 +327,72 @@ function App() {
                       <td>User #{o.user_id}</td>
                       <td style={{ fontWeight: '600', color: '#00f2fe' }}>${o.total_amount.toFixed(2)}</td>
                       <td>
-                        <span className={`badge ${o.status === 'COMPLETED' ? 'completed' : 'pending'}`}>
+                        <span className={`badge ${
+                          o.status === 'DELIVERED' || o.status === 'COMPLETED' ? 'completed' :
+                          o.status === 'CANCELLED' ? 'failed' :
+                          o.status === 'PROCESSING' || o.status === 'SHIPPED' ? 'warn' : 'pending'
+                        }`}>
                           {o.status}
                         </span>
                       </td>
                       <td>{o.items ? o.items.length : 1} items</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                          {o.status === 'PENDING' && (
+                            <>
+                              <button 
+                                className="btn" 
+                                style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', width: 'auto' }}
+                                onClick={() => handleUpdateOrderStatus(o.id, 'CONFIRMED')}
+                              >
+                                Confirm
+                              </button>
+                              <button 
+                                className="btn btn-secondary" 
+                                style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', width: 'auto', background: 'rgba(255, 75, 75, 0.2)' }}
+                                onClick={() => handleUpdateOrderStatus(o.id, 'CANCELLED')}
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          )}
+                          {o.status === 'CONFIRMED' && (
+                            <button 
+                              className="btn" 
+                              style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', width: 'auto' }}
+                              onClick={() => handleUpdateOrderStatus(o.id, 'PROCESSING')}
+                            >
+                              Process
+                            </button>
+                          )}
+                          {o.status === 'PROCESSING' && (
+                            <button 
+                              className="btn" 
+                              style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', width: 'auto' }}
+                              onClick={() => handleUpdateOrderStatus(o.id, 'SHIPPED')}
+                            >
+                              Ship
+                            </button>
+                          )}
+                          {o.status === 'SHIPPED' && (
+                            <button 
+                              className="btn" 
+                              style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', width: 'auto', background: '#00c853' }}
+                              onClick={() => handleUpdateOrderStatus(o.id, 'DELIVERED')}
+                            >
+                              Deliver
+                            </button>
+                          )}
+                          {(o.status === 'DELIVERED' || o.status === 'CANCELLED' || o.status === 'COMPLETED') && (
+                            <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.4)' }}>—</span>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                   {orders.length === 0 && (
                     <tr>
-                      <td colSpan="5" style={{ textAlign: 'center', color: 'rgba(255,255,255,0.4)' }}>
+                      <td colSpan="6" style={{ textAlign: 'center', color: 'rgba(255,255,255,0.4)' }}>
                         No orders recorded.
                       </td>
                     </tr>
