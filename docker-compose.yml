@@ -249,6 +249,20 @@ services:
     networks:
       - backend-tier
 
+  # Jaeger (Distributed Tracing UI & OTLP Collector)
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: dev-jaeger
+    restart: unless-stopped
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "4317:4317"
+      - "4318:4318"
+    networks:
+      - backend-tier
+
   # Promtail (Docker Logs Collector Agent)
   promtail:
     image: grafana/promtail:2.9.8

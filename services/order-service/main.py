@@ -36,12 +36,14 @@ import uuid
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     correlation_id = request.headers.get("x-correlation-id") or request.headers.get("x-request-id") or f"order-{uuid.uuid4()}"
-    start_time = datetime.datetime.utcnow()
+    traceparent = request.headers.get("traceparent") or f"00-{uuid.uuid4().hex}-{uuid.uuid4().hex[:16]}-01"
+    start_time = datetime.datetime.now(datetime.timezone.utc)
     
     response = await call_next(request)
-    duration = (datetime.datetime.utcnow() - start_time).total_seconds() * 1000
+    duration = (datetime.datetime.now(datetime.timezone.utc) - start_time).total_seconds() * 1000
     
     response.headers["X-Correlation-ID"] = correlation_id
+    response.headers["traceparent"] = traceparent
     
     if request.url.path != "/metrics":
         log_data = {

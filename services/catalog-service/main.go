@@ -109,6 +109,12 @@ func jsonLoggerMiddleware() gin.HandlerFunc {
 		}
 		c.Header("X-Correlation-ID", correlationID)
 
+		traceparent := c.GetHeader("traceparent")
+		if traceparent == "" {
+			traceparent = fmt.Sprintf("00-%016x%016x-%016x-01", time.Now().UnixNano(), time.Now().UnixNano()/2, time.Now().UnixNano()%100000)
+		}
+		c.Header("traceparent", traceparent)
+
 		c.Next()
 
 		if path != "/metrics" {

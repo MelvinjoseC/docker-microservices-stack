@@ -25,8 +25,12 @@ app.use(express.json());
 // Track all HTTP requests with correlation IDs and log them in JSON format
 app.use((req, res, next) => {
   const correlationId = req.headers['x-correlation-id'] || req.headers['x-request-id'] || `user-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  const cryptoModule = require('crypto');
+  const traceparent = req.headers['traceparent'] || `00-${cryptoModule.randomBytes(16).toString('hex')}-${cryptoModule.randomBytes(8).toString('hex')}-01`;
   req.correlationId = correlationId;
+  req.traceparent = traceparent;
   res.setHeader('X-Correlation-ID', correlationId);
+  res.setHeader('traceparent', traceparent);
 
   const start = Date.now();
   res.on('finish', () => {
