@@ -101,6 +101,13 @@ class Order(Base):
     status = Column(String, default="PENDING")
     items = Column(JSON, nullable=False)  # Store items list as JSON
 
+class IdempotencyRecord(Base):
+    __tablename__ = "idempotency_records"
+    key = Column(String(128), primary_key=True, index=True)
+    response_code = Column(Integer, nullable=False)
+    response_body = Column(JSON, nullable=False)
+    created_at = Column(String, nullable=False)
+
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
@@ -261,7 +268,13 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
     return order
 
 @app.post("/api/orders", response_model=OrderResponseSchema, status_code=201)
-def create_order(order: OrderCreateSchema, db: Session = Depends(get_db)):
+def create_order(request: Request, order: OrderCreateSchema, db: Session = Depends(get_db)):
+    idempotency_key = request.headers.get("x-idempotency-key")
+    if idempotency_key:
+        existing = db.query(IdempotencyRecord).filter(IdempotencyRecord.key == idempotency_key).first()
+        if existing:
+            return existing.response_body
+
     # Reserve catalog stock for all items
     for item in order.items:
         catalog_client.reserve_stock(item.product_id, item.quantity)
@@ -290,6 +303,24 @@ def create_order(order: OrderCreateSchema, db: Session = Depends(get_db)):
             "items": items_list
         }
         publisher.publish_order_notification(notification_payload)
+
+        # Record idempotency key if provided
+        if idempotency_key:
+            saved_dict = {
+                "id": db_order.id,
+                "user_id": db_order.user_id,
+                "total_amount": db_order.total_amount,
+                "status": db_order.status,
+                "items": items_list
+            }
+            rec = IdempotencyRecord(
+                key=idempotency_key,
+                response_code=201,
+                response_body=saved_dict,
+                created_at=datetime.datetime.now(datetime.timezone.utc).isoformat()
+            )
+            db.add(rec)
+            db.commit()
 
         return db_order
     except Exception as e:

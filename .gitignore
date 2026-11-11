@@ -23,16 +23,14 @@ jspm_packages/
 .eslintcache
 
 # Microservices specific
+**/__pycache__/
+*.pyc
 services/user-service/node_modules/
 services/frontend/node_modules/
 services/order-service/venv/
 services/order-service/.venv/
-services/order-service/__pycache__/
-services/order-service/*.pyc
 services/notification-service/venv/
 services/notification-service/.venv/
-services/notification-service/__pycache__/
-services/notification-service/*.pyc
 
 # Go
 services/catalog-service/catalog-service

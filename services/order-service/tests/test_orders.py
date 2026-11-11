@@ -75,3 +75,22 @@ def test_create_order_insufficient_stock():
         response = client.post("/api/orders", json=payload)
         assert response.status_code == 409
         assert "Insufficient inventory" in response.json()["detail"]
+
+def test_create_order_idempotency():
+    idem_key = "idemp-key-xyz-987"
+    payload = {
+        "user_id": 99,
+        "items": [{"product_id": "p1", "quantity": 1, "price": 50.0}]
+    }
+    # First submission
+    resp1 = client.post("/api/orders", json=payload, headers={"X-Idempotency-Key": idem_key})
+    assert resp1.status_code == 201
+    order1 = resp1.json()
+
+    # Second submission with same idempotency key
+    resp2 = client.post("/api/orders", json=payload, headers={"X-Idempotency-Key": idem_key})
+    assert resp2.status_code == 200 or resp2.status_code == 201
+    order2 = resp2.json()
+
+    assert order1["id"] == order2["id"]
+    assert order1["total_amount"] == order2["total_amount"]
