@@ -16,6 +16,11 @@ spec:
       containers:
         - name: user-service
           image: melvinjosec/user-service:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 5000
           env:
@@ -102,6 +107,11 @@ spec:
       containers:
         - name: catalog-service
           image: melvinjosec/catalog-service:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8080
           env:
@@ -168,6 +178,11 @@ spec:
       containers:
         - name: order-service
           image: melvinjosec/order-service:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8000
           env:
@@ -239,6 +254,11 @@ spec:
       containers:
         - name: notification-service
           image: melvinjosec/notification-service:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8001
           env:
@@ -294,6 +314,11 @@ spec:
       containers:
         - name: frontend
           image: melvinjosec/frontend:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 80
           resources:
@@ -349,6 +374,11 @@ spec:
       containers:
         - name: api-gateway
           image: melvinjosec/api-gateway:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 80
           resources:
