@@ -59,7 +59,7 @@ This repository implements a production-grade, containerized microservices platf
 | **Notification Service** | Python 3.11 / Pika | — | Async AMQP Consumer, Dead Letter Queue (DLQ), Health Server | `8001` | `backend-tier`, `data-tier` |
 | **Databases** | Postgres 15, Mongo 6.0 | — | ACID Persistent Storage with Automated Snapshot/Restore | `5432`, `27017` | `data-tier` |
 | **Broker** | RabbitMQ 3.12 | — | Message Queue with DLQ exchange routing | `5672`, `15672` | `data-tier` |
-| **Observability** | Prometheus, Grafana, Loki | — | Metrics scraping, Alert rules, Log aggregation | `9090`, `3000`, `3100`| `backend-tier` |
+| **Observability** | Prometheus, Grafana, Loki, Alertmanager, Jaeger | — | Metrics scraping, Alert routing, Log aggregation, W3C Tracing | `9090`, `3000`, `3100`, `9093`, `16686` | `backend-tier` |
 
 ---
 
@@ -67,27 +67,40 @@ This repository implements a production-grade, containerized microservices platf
 
 ### User Service (`/api/users`)
 - `GET /health` & `GET /api/users/health`: Health status probe.
+- `GET /metrics`: Prometheus telemetry exporter.
 - `GET /api/users?limit=50&offset=0`: List all users with pagination.
 - `GET /api/users/:id`: Retrieve single user by ID.
-- `POST /api/users`: Create user (`name`, `email`, optional `role`). Validates email format.
+- `POST /api/users/register`: Register user with hashed password and receive JWT token (`name`, `email`, `password`, `role`).
+- `POST /api/users/login`: Authenticate with email/password and obtain JWT access token.
+- `GET /api/users/me`: Return authenticated profile via `Authorization: Bearer <token>`.
+- `POST /api/users`: Admin creation of user profile.
 - `PUT /api/users/:id`: Update user profile and role.
 - `DELETE /api/users/:id`: Delete user record.
 
 ### Catalog Service (`/api/products`)
 - `GET /health` & `GET /api/products/health`: Health status probe.
-- `GET /api/products?search={term}`: Retrieve products with regex filtering.
+- `GET /metrics`: Prometheus telemetry exporter.
+- `GET /api/products?search={term}&category={cat}&limit=20&skip=0&sort_by=price&sort_order=asc`: Filter and sort products.
 - `GET /api/products/:id`: Retrieve single product by ID.
-- `POST /api/products`: Create new product catalog item (`name`, `price`, `stock`).
+- `POST /api/products`: Create catalog item (`name`, `price`, `stock`, `category`).
+- `POST /api/products/:id/reserve`: Atomically reserve inventory units during checkout (`{"quantity": n}`).
+- `POST /api/products/:id/restock`: Replenish inventory units (`{"quantity": n}`).
 - `PUT /api/products/:id`: Update product attributes.
 - `DELETE /api/products/:id`: Delete product item.
 
 ### Order Service (`/api/orders`)
 - `GET /health` & `GET /api/orders/health`: Health status probe.
+- `GET /metrics`: Prometheus telemetry exporter.
 - `GET /api/orders`: List all orders.
 - `GET /api/orders/{order_id}`: Retrieve single order by ID.
-- `POST /api/orders`: Create new order (`user_id`, `items: [{product_id, quantity, price}]`). Dispatches event to RabbitMQ.
-- `PATCH /api/orders/{order_id}/status`: Update order status (`status: "COMPLETED"`).
+- `POST /api/orders`: Create new order (`user_id`, `items: [{product_id, quantity, price}]`). Supports `X-Idempotency-Key` header and validates catalog stock availability before publishing to RabbitMQ.
+- `PATCH /api/orders/{order_id}/status`: Transition order status according to finite state machine rules (`PENDING -> CONFIRMED -> PROCESSING -> SHIPPED -> DELIVERED` or `CANCELLED`).
 - `DELETE /api/orders/{order_id}`: Cancel/remove order.
+
+### Notification Service (`:8001`)
+- `GET /health` & `GET /api/notifications/health`: HTTP health probe.
+- `GET /metrics`: Prometheus metrics exporter (`notifications_processed_total`, `notifications_failed_total`, `notification_processing_duration_seconds`).
+- Consumer: Processes AMQP events with in-memory deduplication and dead letter queue (DLQ) poison-message diversion.
 
 ---
 
@@ -113,6 +126,9 @@ make logs
 # Run unit and integration test suites
 make test-unit
 
+# Run end-to-end integration smoke test suite
+make test-e2e
+
 # Run local integration health checks
 make test
 
@@ -135,6 +151,8 @@ Once services are running (`make up`), access:
 - **API Gateway Health**: [http://localhost/health](http://localhost/health)
 - **RabbitMQ Dashboard**: [http://localhost:15672](http://localhost:15672) (User: `guest` / Pass: `guest`)
 - **Prometheus Console**: [http://localhost:9090](http://localhost:9090)
+- **Alertmanager UI**: [http://localhost:9093](http://localhost:9093)
+- **Jaeger Tracing Console**: [http://localhost:16686](http://localhost:16686)
 - **Grafana Server**: [http://localhost:3000](http://localhost:3000) (User: `admin` / Pass: `admin`)
 
 ---
