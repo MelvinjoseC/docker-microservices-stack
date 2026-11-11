@@ -1,5 +1,5 @@
 # Build stage
-FROM python:3.11-slim AS build
+FROM python:3.15-slim AS build
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libpq-dev && rm -rf /var/lib/apt/lists/*
@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Production stage
-FROM python:3.11-slim
+FROM python:3.15-slim
 
 WORKDIR /app
 
