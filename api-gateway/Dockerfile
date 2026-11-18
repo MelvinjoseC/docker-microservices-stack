@@ -1,4 +1,4 @@
-FROM nginx:1.25-alpine
+FROM nginx:1.29-alpine
 
 # Install curl for healthcheck validation
 RUN apk add --no-cache curl
